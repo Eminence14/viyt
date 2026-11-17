@@ -137,7 +137,7 @@ object Watch {
     var info by mutableStateOf<WatchInfo?>(null)
     private var job: Job? = null
 
-    fun open(ctx: Context, scope: CoroutineScope, it: Item) {
+    fun open(ctx: Context, scope: CoroutineScope, it: Item, startMs: Long = 0L) {
         Engine.prefetch(it.url)
         expanded = true
         if (item?.url == it.url && PlayerHolder.currentUrl.value == it.url) return
@@ -160,7 +160,7 @@ object Watch {
             }
             try {
                 val s = Engine.resolve(it.url)
-                if (item?.url == it.url) PlayerHolder.load(ctx, it.url, s)
+                if (item?.url == it.url) PlayerHolder.load(ctx, it.url, s, startMs)
             } catch (t: Throwable) {
                 error = Engine.friendly(t)
             } finally {
@@ -188,6 +188,14 @@ object Watch {
             catch (t: Throwable) { Toast.makeText(ctx, Engine.friendly(t), Toast.LENGTH_LONG).show() }
             finally { loading = false }
         }
+    }
+
+    /** Music took over the player: forget the video without stopping playback. */
+    fun detach() {
+        job?.cancel()
+        item = null
+        info = null
+        fullscreen = false
     }
 
     fun close() {

@@ -87,7 +87,7 @@ fun SettingsScreen() {
         Section("Open app on")
         var start by remember { mutableStateOf(prefs.startTab) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("HOME" to "Home", "SUBS" to "Subscriptions", "YOU" to "You").forEach { (key, label) ->
+            listOf("HOME" to "Home", "SUBS" to "Subscriptions", "YOU" to "You", "MUSIC" to "Music").forEach { (key, label) ->
                 FilterChip(selected = start == key, onClick = { start = key; prefs.startTab = key }, label = { Text(label) })
             }
         }

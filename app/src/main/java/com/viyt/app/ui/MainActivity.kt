@@ -44,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -110,6 +111,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         PlayerHolder.get(this).addListener(listener)
         handleIntent(intent)
+        if (savedInstanceState == null && Engine.prefs.startTab == "MUSIC") MusicUi.on = true
         setContent {
             ViytTheme {
                 Surface(color = YtBg, contentColor = YtText) { App() }
@@ -228,18 +230,23 @@ class MainActivity : ComponentActivity() {
         }
 
         val watching = Watch.item != null
+        val music = MusicUi.on
         BackHandler(enabled = watching && Watch.fullscreen) { setFullscreen(false) }
-        BackHandler(enabled = watching && Watch.expanded && !Watch.fullscreen) { Watch.expanded = false }
-        BackHandler(enabled = !(watching && Watch.expanded) && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+        BackHandler(enabled = !music && watching && Watch.expanded && !Watch.fullscreen) { Watch.expanded = false }
+        BackHandler(enabled = !music && !(watching && Watch.expanded) && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
         val startTab = runCatching { Tab.valueOf(Engine.prefs.startTab) }.getOrDefault(Tab.HOME)
-        BackHandler(enabled = !(watching && Watch.expanded) && stack.isEmpty() && tab != startTab) { tab = startTab }
+        BackHandler(enabled = !music && !(watching && Watch.expanded) && stack.isEmpty() && tab != startTab) { tab = startTab }
 
         // One video surface, moved between the watch page, mini player and PiP without restarting.
         val surface = remember { movableContentOf { VideoSurface(player) } }
         val nextUp = Watch.info?.related?.firstOrNull { it.kind == Item.Kind.VIDEO && !it.short }
 
+        val musicQueue by com.viyt.app.player.MusicQueue.tracks.collectAsState()
+        val playerMode by PlayerHolder.mode.collectAsState()
+        val musicPlaying = playerMode == PlayerHolder.Mode.MUSIC && musicQueue.isNotEmpty()
         when {
             inPip.value -> Box(Modifier.fillMaxSize().background(Color.Black)) { if (watching) surface() }
+            music -> MusicApp(onSwitch = { MusicUi.on = false }, onSignIn = signIn)
             watching && Watch.fullscreen -> PlayerBox(
                 player, surface, Modifier.fillMaxSize(),
                 onCollapse = { setFullscreen(false) }, onFullscreen = { setFullscreen(it) },
@@ -251,6 +258,7 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.weight(1f).fillMaxWidth().then(if (shortsFull) Modifier else Modifier.statusBarsPadding())) {
                         Screen(stack.lastOrNull(), tab, stack, a, openShorts, shortsQueue, shortsStart, signIn)
                     }
+                    if (musicPlaying && !watching && !shortsFull) MusicMini { MusicUi.on = true; MusicUi.nowPlaying = true }
                     if (watching && !Watch.expanded && !shortsFull) {
                         MiniPlayer(player, surface, onExpand = { Watch.expanded = true }, onClose = { Watch.close() })
                     }

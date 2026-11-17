@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -31,6 +32,9 @@ object PlayerHolder {
 
     private var exo: ExoPlayer? = null
 
+    enum class Mode { VIDEO, MUSIC }
+    val mode = MutableStateFlow(Mode.VIDEO)
+
     /** What is loaded right now. */
     val current = MutableStateFlow<Stream?>(null)
     val currentUrl = MutableStateFlow<String?>(null)
@@ -44,7 +48,18 @@ object PlayerHolder {
         val load = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15_000, 60_000, 700, 1_500)
             .build()
+        // Music queue items use "viyt://audio/<videoId>"; the real audio link is fetched only when
+        // ExoPlayer is about to load that track (cached afterwards), so next/previous just work.
+        val resolving = ResolvingDataSource.Factory(
+            OkHttpDataSource.Factory(InnerTube.http).setUserAgent(InnerTube.PLAYER_UA)
+        ) { spec ->
+            if (spec.uri.scheme == "viyt") {
+                val id = spec.uri.lastPathSegment ?: throw java.io.IOException("Bad track")
+                spec.withUri(Uri.parse(MusicQueue.audioUrl(id)))
+            } else spec
+        }
         return ExoPlayer.Builder(ctx)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(resolving))
             .setLoadControl(load)
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
@@ -91,6 +106,8 @@ object PlayerHolder {
     fun load(context: Context, url: String, s: Stream, startMs: Long = 0L, play: Boolean = true) {
         val p = get(context)
         val source = source(url, s)
+        mode.value = Mode.VIDEO
+        MusicQueue.onVideoStarted()
         p.setMediaSource(source, startMs)
         p.prepare()
         p.playWhenReady = play

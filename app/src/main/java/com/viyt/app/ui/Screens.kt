@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.NorthWest
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
@@ -148,17 +149,20 @@ fun FeedList(
 
 @Composable
 fun Logo() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    // Tap the logo to switch to viyt Music.
+    Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { MusicUi.on = true }.padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(width = 30.dp, height = 21.dp).background(YtRed, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(17.dp))
         }
         Text("viyt", fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp, modifier = Modifier.padding(start = 3.dp))
+        Icon(Icons.Outlined.KeyboardArrowDown, "Switch to Music", tint = YtSecondary, modifier = Modifier.size(18.dp))
     }
 }
 
 @Composable
 fun MainTopBar(onSearch: () -> Unit, onDownloads: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Logo()
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onDownloads) { Icon(Icons.Outlined.Download, "Downloads") }
