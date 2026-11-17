@@ -281,10 +281,12 @@ object InnerTube {
         val channelId = firstString(avatarNode, "browseId")
         val image = v.optJSONObject("contentImage")
         val live = image?.toString()?.contains("\"LIVE\"") == true
+        val isShort = firstString(v.optJSONObject("rendererContext"), "url")?.startsWith("/shorts/") == true
         return when {
             type.contains("VIDEO") -> Item(
-                id, title, watchUrl(id), channel, findClock(image), "https://i.ytimg.com/vi/$id/hqdefault.jpg",
-                Item.Kind.VIDEO, meta = metaLine, avatar = avatar, channelUrl = channelId?.let { "$ORIGIN/channel/$it" }, live = live,
+                id, title, if (isShort) "$ORIGIN/shorts/$id" else watchUrl(id), channel, findClock(image),
+                "https://i.ytimg.com/vi/$id/hqdefault.jpg", Item.Kind.VIDEO, meta = metaLine, avatar = avatar,
+                channelUrl = channelId?.let { "$ORIGIN/channel/$it" }, live = live, short = isShort,
             )
             type.contains("PLAYLIST") || type.contains("ALBUM") || type.contains("PODCAST") -> Item(
                 id, title, "$ORIGIN/playlist?list=$id", channel, null, thumb(image), Item.Kind.PLAYLIST, meta = metaLine,

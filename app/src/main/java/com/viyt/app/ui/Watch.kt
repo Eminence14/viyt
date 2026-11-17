@@ -487,7 +487,7 @@ fun WatchPage(
                     }
                 }
             }
-            val related = info?.related.orEmpty()
+            val related = info?.related.orEmpty().let { r -> if (Engine.prefs.hideShorts) r.filter { !it.short } else r }
             if (info == null) item(key = "rel-skel") { CardSkeletons(big = true) }
             items(related, key = { "rel" + it.kind.name + it.id }) { r ->
                 ItemView(r, Actions(open = { i -> if (i.kind == Item.Kind.VIDEO) Watch.open(context, scope, i) else a.open(i) }, more = a.more), big = true)

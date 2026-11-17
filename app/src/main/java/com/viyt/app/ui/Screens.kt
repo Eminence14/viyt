@@ -129,7 +129,8 @@ fun FeedList(
     body: (LazyListScope.(List<Item>) -> Unit)? = null,
 ) {
     PullToRefreshBox(isRefreshing = h.refreshing, onRefresh = { h.refresh() }, modifier = Modifier.fillMaxSize()) {
-        val list = h.feed?.items
+        val hideShorts by Engine.prefs.hideShortsState
+        val list = h.feed?.items?.let { all -> if (hideShorts) all.filter { !it.short } else all }
         when {
             list == null && h.error != null -> Message(h.error!!, "Retry") { h.refresh() }
             list == null -> Column { CardSkeletons(big) }
@@ -202,15 +203,13 @@ fun HomeScreen(a: Actions, openShort: (List<Item>, Int) -> Unit, onSearch: () ->
     Column(Modifier.fillMaxSize()) {
         MainTopBar(onSearch, onDownloads)
         if (chipFeed != null) {
-            FeedList(chipFeed, big = true, a = a, header = { item { ChipRow(chips, chip) { chip = it } } })
+            FeedList(chipFeed, big = true, a = a, header = { item { ChipRow(chips, chip) { chip = it } } }) { list ->
+                list.filter { !it.short }.forEach { item(key = "c" + it.kind.name + it.id) { ItemView(it, a, big = true) } }
+            }
         } else {
+            // Home shows videos only: no Shorts, no Shorts shelf.
             FeedList(home, big = true, a = a, header = { if (chips.isNotEmpty()) item { ChipRow(chips, chip) { chip = it } } }) { list ->
-                val shorts = list.filter { it.short }
-                val videos = list.filter { !it.short }
-                videos.forEachIndexed { i, it ->
-                    item(key = "v" + it.kind.name + it.id) { ItemView(it, a, big = true) }
-                    if (i == 1 && shorts.size >= 2) item(key = "shorts-shelf") { ShortsShelf(shorts, openShort) }
-                }
+                list.filter { !it.short }.forEach { item(key = "v" + it.kind.name + it.id) { ItemView(it, a, big = true) } }
             }
         }
     }

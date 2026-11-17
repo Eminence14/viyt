@@ -188,7 +188,9 @@ class MainActivity : ComponentActivity() {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val player = remember { PlayerHolder.get(context) }
-        var tab by remember { mutableStateOf(Tab.HOME) }
+        var tab by remember { mutableStateOf(runCatching { Tab.valueOf(Engine.prefs.startTab) }.getOrDefault(Tab.HOME)) }
+        val hideShorts by Engine.prefs.hideShortsState
+        LaunchedEffect(hideShorts) { if (hideShorts && tab == Tab.SHORTS) tab = Tab.HOME }
         val stack = remember { mutableStateListOf<Route>() }
         var shortsQueue by remember { mutableStateOf<List<Item>?>(null) }
         var shortsStart by remember { mutableIntStateOf(0) }
@@ -229,7 +231,8 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled = watching && Watch.fullscreen) { setFullscreen(false) }
         BackHandler(enabled = watching && Watch.expanded && !Watch.fullscreen) { Watch.expanded = false }
         BackHandler(enabled = !(watching && Watch.expanded) && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
-        BackHandler(enabled = !(watching && Watch.expanded) && stack.isEmpty() && tab != Tab.HOME) { tab = Tab.HOME }
+        val startTab = runCatching { Tab.valueOf(Engine.prefs.startTab) }.getOrDefault(Tab.HOME)
+        BackHandler(enabled = !(watching && Watch.expanded) && stack.isEmpty() && tab != startTab) { tab = startTab }
 
         // One video surface, moved between the watch page, mini player and PiP without restarting.
         val surface = remember { movableContentOf { VideoSurface(player) } }
@@ -303,7 +306,8 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxWidth().background(if (dark) Color.Black else YtBg).navigationBarsPadding()) {
             HorizontalDivider(color = if (dark) Color(0xFF222222) else YtDivider, thickness = 0.5.dp)
             Row(Modifier.fillMaxWidth().height(50.dp)) {
-                Tab.entries.forEach { t ->
+                val hideShorts by Engine.prefs.hideShortsState
+                Tab.entries.filter { !(hideShorts && it == Tab.SHORTS) }.forEach { t ->
                     val selected = t == tab
                     Column(
                         Modifier.weight(1f).height(50.dp)

@@ -84,6 +84,28 @@ fun SettingsScreen() {
         }
 
         Divider()
+        Section("Open app on")
+        var start by remember { mutableStateOf(prefs.startTab) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("HOME" to "Home", "SUBS" to "Subscriptions", "YOU" to "You").forEach { (key, label) ->
+                FilterChip(selected = start == key, onClick = { start = key; prefs.startTab = key }, label = { Text(label) })
+            }
+        }
+        Text("The page you land on every time you open viyt.", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+
+        Divider()
+        val hideShorts by prefs.hideShortsState
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Hide Shorts")
+                Text("Keeps Shorts out of Subscriptions, search and Up next, and hides the Shorts tab. Home never shows Shorts.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = hideShorts, onCheckedChange = { prefs.saveHideShorts(it) })
+        }
+
+        Divider()
         Section("Streaming quality")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(360, 480, 720, 1080).forEach { h ->

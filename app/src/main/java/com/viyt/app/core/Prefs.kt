@@ -45,4 +45,14 @@ class Prefs(context: Context) {
     var autoplay: Boolean
         get() = sp.getBoolean("autoplay", true)
         set(v) = sp.edit().putBoolean("autoplay", v).apply()
+
+    /** Which tab the app opens on: HOME, SUBS or YOU. */
+    var startTab: String
+        get() = sp.getString("start_tab", "HOME") ?: "HOME"
+        set(v) = sp.edit().putString("start_tab", v).apply()
+
+    /** Keep Shorts out of every feed and hide the Shorts tab. Observable so the UI updates live. */
+    val hideShortsState = mutableStateOf(sp.getBoolean("hide_shorts", true))
+    val hideShorts: Boolean get() = hideShortsState.value
+    fun saveHideShorts(v: Boolean) { hideShortsState.value = v; sp.edit().putBoolean("hide_shorts", v).apply() }
 }
