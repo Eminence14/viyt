@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Viyt" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/viyt_bg</item>
+        <item name="android:statusBarColor">@color/viyt_bg</item>
+        <item name="android:navigationBarColor">@color/viyt_bg</item>
+    </style>
+    <color name="viyt_bg">#0E0E11</color>
+    <color name="viyt_accent">#FF5A4E</color>
+</resources>

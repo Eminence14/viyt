@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- viyt mark: a play triangle sitting on a download bar, inside the 66dp safe zone -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- rounded tile -->
+    <path
+        android:fillColor="#FF5A4E"
+        android:pathData="M36,30h36a8,8 0,0 1,8 8v26a8,8 0,0 1,-8 8h-36a8,8 0,0 1,-8 -8v-26a8,8 0,0 1,8 -8z" />
+    <!-- play triangle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,40L48,62L65,51Z" />
+    <!-- download bar -->
+    <path
+        android:fillColor="#FF5A4E"
+        android:pathData="M36,76h36a3,3 0,0 1,3 3v0a3,3 0,0 1,-3 3h-36a3,3 0,0 1,-3 -3v0a3,3 0,0 1,3 -3z" />
+</vector>
