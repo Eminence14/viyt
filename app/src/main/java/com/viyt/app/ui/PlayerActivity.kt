@@ -308,7 +308,7 @@ class PlayerActivity : ComponentActivity() {
                                 },
                             )
                         })
-                        AnimatedVisibility(controls || !playing, enter = fadeIn(), exit = fadeOut()) {
+                        androidx.compose.animation.AnimatedVisibility(visible = controls || !playing, enter = fadeIn(), exit = fadeOut()) {
                             Controls(
                                 act, player, title, isFull, pos, dur, buf, playing, ended,
                                 onSettings = { sheet = true },
