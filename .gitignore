@@ -9,3 +9,5 @@ app/src/main/jniLibs/
 qjs-src/
 qjs-*/
 out/
+signing/
+*.jks

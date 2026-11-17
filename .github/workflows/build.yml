@@ -40,6 +40,13 @@ jobs:
           done
           ls -la app/src/main/jniLibs/*/
 
+      - name: Restore signing key
+        env:
+          KS: ${{ secrets.VIYT_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then echo "::error::Add the VIYT_KEYSTORE_B64 and VIYT_STORE_PASSWORD repository secrets"; exit 1; fi
+          mkdir -p signing && echo "$KS" | base64 -d > signing/viyt.jks
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
@@ -47,6 +54,7 @@ jobs:
       - name: Build APKs
         env:
           VIYT_VERSION_CODE: ${{ github.run_number }}
+          VIYT_STORE_PASSWORD: ${{ secrets.VIYT_STORE_PASSWORD }}
         run: gradle assembleRelease --stacktrace
 
       - name: Rename APKs

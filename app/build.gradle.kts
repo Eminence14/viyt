@@ -20,9 +20,10 @@ android {
     signingConfigs {
         create("viyt") {
             storeFile = rootProject.file("signing/viyt.jks")
-            storePassword = System.getenv("VIYT_STORE_PASSWORD") ?: "viyt-store-pass"
+            // Decoded from the VIYT_KEYSTORE_B64 GitHub secret by the build workflow; never committed.
+            storePassword = System.getenv("VIYT_STORE_PASSWORD")
             keyAlias = "viyt"
-            keyPassword = System.getenv("VIYT_KEY_PASSWORD") ?: "viyt-store-pass"
+            keyPassword = System.getenv("VIYT_STORE_PASSWORD")
         }
     }
 

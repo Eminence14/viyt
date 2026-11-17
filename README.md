@@ -23,7 +23,7 @@ A lean YouTube client for Android. Sign in, browse your library, stream and down
 ## Building
 Push to `main`, and GitHub Actions does the rest: it builds QuickJS with the NDK, builds the APKs and publishes them as a **Release**. Install `viyt-*-arm64-v8a.apk` on any modern phone.
 
-The signing key in `signing/` keeps every build installable as an update over the last one. Keep this repo **private**.
+The signing key lives in two repository secrets (`VIYT_KEYSTORE_B64`, `VIYT_STORE_PASSWORD`), never in the code, so every build installs as an update over the last one.
 
 ## Layout
 ```
