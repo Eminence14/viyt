@@ -38,21 +38,41 @@ object InnerTube {
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    /** Open the connection to YouTube early so the first real request skips the TLS handshake. */
+    /**
+     * YouTube's anonymous visitor ID. The real apps send one with every request; without it YouTube
+     * soon answers "Sign in to confirm you're not a bot". Fetched once and kept in memory.
+     */
+    @Volatile private var visitorData: String? = null
+
+    private fun visitor(refresh: Boolean = false): String? {
+        if (!refresh) visitorData?.let { return it }
+        val body = JSONObject().put("context", webContext(withVisitor = false))
+        val req = Request.Builder()
+            .url("$ORIGIN/youtubei/v1/visitor_id?prettyPrint=false")
+            .post(body.toString().toRequestBody(JSON))
+            .header("User-Agent", WEB_UA)
+            .header("Origin", ORIGIN)
+            .build()
+        val vd = runCatching { execute(req).optJSONObject("responseContext")?.optString("visitorData")?.ifEmpty { null } }
+            .getOrNull()
+        if (vd != null) visitorData = vd
+        return visitorData
+    }
+
+    /** Open the connection to YouTube early and fetch the visitor ID, so the first real request is fast. */
     fun warm() {
-        runCatching {
-            http.newCall(Request.Builder().url("$ORIGIN/generate_204").header("User-Agent", WEB_UA).build())
-                .execute().close()
-        }
+        runCatching { visitor() }
     }
 
     // ------------------------------------------------------------------ requests
 
-    private fun webContext() = JSONObject().put(
-        "client", JSONObject()
+    private fun webContext(withVisitor: Boolean = true): JSONObject {
+        val client = JSONObject()
             .put("clientName", "WEB").put("clientVersion", WEB_VERSION)
             .put("hl", "en").put("userAgent", WEB_UA)
-    )
+        if (withVisitor) visitor()?.let { client.put("visitorData", it) }
+        return JSONObject().put("client", client)
+    }
 
     private fun postWeb(endpoint: String, body: JSONObject, cookies: Map<String, String>?): JSONObject {
         body.put("context", webContext())
@@ -64,6 +84,7 @@ object InnerTube {
             .header("X-Origin", ORIGIN)
             .header("X-Youtube-Client-Name", "1")
             .header("X-Youtube-Client-Version", WEB_VERSION)
+        visitorData?.let { b.header("X-Goog-Visitor-Id", it) }
         val sapisid = cookies?.get("SAPISID") ?: cookies?.get("__Secure-3PAPISID")
         if (cookies != null && sapisid != null) {
             val ts = System.currentTimeMillis() / 1000
@@ -296,25 +317,13 @@ object InnerTube {
 
     /** Direct stream links for one video, in a single request. Throws if YouTube won't hand them out. */
     fun player(videoId: String, maxHeight: Int): Stream {
-        val client = JSONObject()
-            .put("clientName", PLAYER_NAME).put("clientVersion", PLAYER_VERSION)
-            .put("deviceMake", "Apple").put("deviceModel", "RealityDevice17,1")
-            .put("osName", "visionOS").put("osVersion", "26.5.23O471")
-            .put("userAgent", PLAYER_UA).put("hl", "en")
-        val body = JSONObject()
-            .put("context", JSONObject().put("client", client))
-            .put("videoId", videoId)
-            .put("contentCheckOk", true).put("racyCheckOk", true)
-        val req = Request.Builder()
-            .url("$ORIGIN/youtubei/v1/player?prettyPrint=false")
-            .post(body.toString().toRequestBody(JSON))
-            .header("User-Agent", PLAYER_UA)
-            .header("Origin", ORIGIN)
-            .header("X-Youtube-Client-Name", PLAYER_ID)
-            .header("X-Youtube-Client-Version", PLAYER_VERSION)
-            .build()
-        val j = execute(req)
-        val status = j.optJSONObject("playabilityStatus")
+        var j = playerRequest(videoId, visitor())
+        var status = j.optJSONObject("playabilityStatus")
+        if (status?.optString("status") == "LOGIN_REQUIRED") {
+            // Usually the bot check: get a fresh visitor ID and try once more.
+            j = playerRequest(videoId, visitor(refresh = true))
+            status = j.optJSONObject("playabilityStatus")
+        }
         if (status?.optString("status") != "OK") {
             throw IOException(status?.optString("reason")?.ifEmpty { null } ?: "Video unavailable on the fast path")
         }
@@ -383,6 +392,29 @@ object InnerTube {
             }
         }
         throw IOException("No directly playable stream")
+    }
+
+    private fun playerRequest(videoId: String, vd: String?): JSONObject {
+        val client = JSONObject()
+            .put("clientName", PLAYER_NAME).put("clientVersion", PLAYER_VERSION)
+            .put("deviceMake", "Apple").put("deviceModel", "RealityDevice17,1")
+            .put("osName", "visionOS").put("osVersion", "26.5.23O471")
+            .put("userAgent", PLAYER_UA).put("hl", "en")
+        if (vd != null) client.put("visitorData", vd)
+        val body = JSONObject()
+            .put("context", JSONObject().put("client", client))
+            .put("videoId", videoId)
+            .put("contentCheckOk", true).put("racyCheckOk", true)
+        val req = Request.Builder()
+            .url("$ORIGIN/youtubei/v1/player?prettyPrint=false")
+            .post(body.toString().toRequestBody(JSON))
+            .header("User-Agent", PLAYER_UA)
+            .header("Origin", ORIGIN)
+            .header("X-Youtube-Client-Name", PLAYER_ID)
+            .header("X-Youtube-Client-Version", PLAYER_VERSION)
+            .apply { if (vd != null) header("X-Goog-Visitor-Id", vd) }
+            .build()
+        return execute(req)
     }
 
     /** Subtitle tracks from a player response, as WebVTT links. Auto-generated tracks are listed last. */
