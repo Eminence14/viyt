@@ -78,7 +78,6 @@ class DownloadService : Service() {
     }
 
     private suspend fun drain() {
-        Engine.awaitEngine()
         while (true) {
             val task = Downloads.nextQueued() ?: break
             runOne(task)
@@ -90,33 +89,48 @@ class DownloadService : Service() {
         stopSelf()
     }
 
-    private fun runOne(task: DownloadTask) {
+    private suspend fun runOne(task: DownloadTask) {
         runningId = task.id
         Downloads.edit(task.id) { it.copy(status = DownloadTask.Status.RUNNING, message = "Starting") }
         val tmp = File(getExternalFilesDir(null) ?: filesDir, "tmp/${task.id}").apply { mkdirs() }
-        try {
-            val req = Engine.downloadRequest(task.url, task.format, tmp)
-            var lastNotify = 0L
-            val onProgress: (Float, Long, String) -> Unit = { progress, eta, line ->
-                val p = (progress / 100f).coerceIn(0f, 1f)
-                val msg = when {
-                    line.contains("[Merger]") || line.contains("[ExtractAudio]") -> "Converting"
-                    progress > 0 -> "Downloading"
-                    else -> "Preparing"
-                }
-                Downloads.edit(task.id) { it.copy(progress = p, etaSec = eta, message = msg) }
-                val now = System.currentTimeMillis()
-                if (now - lastNotify > 700) {
-                    lastNotify = now
-                    nm.notify(NOTIF_ID, notification(task.title, msg, p, false))
-                }
+        val canceled = { Downloads.get(task.id)?.status == DownloadTask.Status.CANCELED }
+        var lastNotify = 0L
+        val report: (Float, String, Long) -> Unit = { p, msg, eta ->
+            Downloads.edit(task.id) { it.copy(progress = p, etaSec = eta, message = msg) }
+            val now = System.currentTimeMillis()
+            if (now - lastNotify > 700) {
+                lastNotify = now
+                nm.notify(NOTIF_ID, notification(task.title, msg, p, false))
             }
-            YoutubeDL.execute(req, task.id, onProgress)
-            if (Downloads.get(task.id)?.status == DownloadTask.Status.CANCELED) return
-            val file = tmp.listFiles()
-                ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
-                ?.maxByOrNull { it.length() }
-                ?: throw IllegalStateException("yt-dlp finished but no file was produced")
+        }
+        try {
+            // 1) Fast path: direct parallel download + native merge.
+            val file = try {
+                if (task.format == DownloadFormat.MP3) throw IllegalStateException("MP3 goes through yt-dlp")
+                FastDownload.run(task.url, task.format, tmp, canceled) { p, msg -> report(p, msg, -1) }
+            } catch (c: FastDownload.Canceled) {
+                return
+            } catch (t: Throwable) {
+                if (canceled()) return
+                // 2) Fallback: yt-dlp.
+                tmp.listFiles()?.forEach { it.delete() }
+                report(0f, "Preparing", -1)
+                val req = Engine.ytdlpDownloadRequest(task.url, task.format, tmp)
+                val onProgress: (Float, Long, String) -> Unit = { progress, eta, line ->
+                    val msg = when {
+                        line.contains("[Merger]") || line.contains("[ExtractAudio]") -> "Converting"
+                        progress > 0 -> "Downloading"
+                        else -> "Preparing"
+                    }
+                    report((progress / 100f).coerceIn(0f, 1f), msg, eta)
+                }
+                YoutubeDL.execute(req, task.id, onProgress)
+                if (canceled()) return
+                tmp.listFiles()
+                    ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") && !it.name.startsWith("part") }
+                    ?.maxByOrNull { it.length() }
+                    ?: throw IllegalStateException("yt-dlp finished but no file was produced")
+            }
             val mime = mimeOf(file)
             val uri = publish(file, mime)
             Downloads.edit(task.id) {
@@ -124,8 +138,7 @@ class DownloadService : Service() {
                     resultUri = uri.toString(), mime = mime)
             }
         } catch (t: Throwable) {
-            val canceled = Downloads.get(task.id)?.status == DownloadTask.Status.CANCELED
-            if (!canceled) {
+            if (!canceled()) {
                 Downloads.edit(task.id) { it.copy(status = DownloadTask.Status.FAILED, message = Engine.friendly(t)) }
             }
         } finally {

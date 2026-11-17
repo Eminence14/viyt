@@ -2,6 +2,7 @@ package com.viyt.app.core
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.runtime.mutableStateOf
 
 /** Small settings store. */
 class Prefs(context: Context) {
@@ -30,4 +31,13 @@ class Prefs(context: Context) {
     var accountLabel: String?
         get() = sp.getString("account_label", null)
         set(v) = sp.edit().putString("account_label", v).apply()
+
+    /** Keep playing after leaving the player (with lock-screen controls). */
+    var backgroundPlay: Boolean
+        get() = sp.getBoolean("bg_play", true)
+        set(v) = sp.edit().putBoolean("bg_play", v).apply()
+
+    /** Crop-to-fill instead of fit; observable so the player updates live. */
+    val zoomState = mutableStateOf(sp.getBoolean("zoom", false))
+    fun saveZoom(v: Boolean) { zoomState.value = v; sp.edit().putBoolean("zoom", v).apply() }
 }

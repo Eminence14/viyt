@@ -127,6 +127,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
 /** A pushed page on top of the tabs: a playlist/channel list or Settings. */
 sealed class Page {
     data class ListPage(val title: String, val url: String) : Page()
+    data class FeedPage(val feed: Feed) : Page()
     data object Settings : Page()
 }
 
@@ -169,6 +170,7 @@ fun App(sharedUrl: androidx.compose.runtime.MutableState<String?>, startTab: and
                 title = {
                     when (top) {
                         is Page.ListPage -> Text(top.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        is Page.FeedPage -> Text(top.feed.label)
                         Page.Settings -> Text("Settings")
                         null -> Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("vi", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
@@ -201,12 +203,13 @@ fun App(sharedUrl: androidx.compose.runtime.MutableState<String?>, startTab: and
         Column(Modifier.padding(pad).fillMaxSize()) {
             EngineBanner()
             when (top) {
-                is Page.ListPage -> ItemList(top.url, { fresh -> Engine.list(top.url, 200, fresh) }, open, download)
+                is Page.ListPage -> ItemList(top.url, { fresh -> Engine.list(top.url, fresh) }, open, download)
+                is Page.FeedPage -> ItemList("feed:${top.feed.name}", { fresh -> Engine.feed(top.feed, fresh) }, open, download)
                 Page.Settings -> SettingsScreen()
                 null -> when (tab) {
                     Tab.HOME -> HomeScreen(open, download)
                     Tab.SEARCH -> SearchScreen(open, download)
-                    Tab.LIBRARY -> LibraryScreen { f -> stack.add(Page.ListPage(f.label, f.url)) }
+                    Tab.LIBRARY -> LibraryScreen { f -> stack.add(Page.FeedPage(f)) }
                     Tab.DOWNLOADS -> DownloadsScreen()
                 }
             }
@@ -227,18 +230,15 @@ fun App(sharedUrl: androidx.compose.runtime.MutableState<String?>, startTab: and
 
 @Composable
 private fun EngineBanner() {
-    val ready by Engine.ready.collectAsState()
+    // The fast path never waits on yt-dlp, so only show something when yt-dlp is busy or broken.
     val status by Engine.status.collectAsState()
     val failed by Engine.failed.collectAsState()
     if (failed != null) {
-        Text("Engine error: $failed", color = MaterialTheme.colorScheme.error,
+        Text("Download engine error: $failed", color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-    } else if (!ready || status != "Ready") {
-        Column(Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
-            Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-        }
+    } else if (status != "Ready") {
+        Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
     }
 }
 
@@ -321,7 +321,7 @@ private fun SearchScreen(open: (Item) -> Unit, download: (Item) -> Unit) {
             q.isEmpty() -> Message("Type something and press search.\nPasting a YouTube link works too.")
             q.startsWith("http") -> ItemList("link:$q", { fresh ->
                 // A pasted playlist/channel opens as a list; a single video shows as one row.
-                if (q.contains("list=") || q.contains("/@") || q.contains("/channel/")) Engine.list(q, 200, fresh)
+                if (q.contains("list=") || q.contains("/@") || q.contains("/channel/")) Engine.list(q, fresh)
                 else listOf(Item(q, q, q, null, null, null, Item.Kind.VIDEO))
             }, open, download)
             else -> ItemList("search:$q", { _ -> Engine.search(q) }, open, download)

@@ -13,8 +13,28 @@ class Cookies(private val context: Context) {
 
     val file: File get() = File(context.filesDir, "cookies.txt")
 
+    @Volatile private var cached: Map<String, String>? = null
+    @Volatile private var cachedStamp = -1L
+
+    /** name -> value for every YouTube cookie, read once and kept in memory. */
+    fun map(): Map<String, String>? {
+        val f = file
+        if (!f.exists()) return null
+        val stamp = f.lastModified()
+        if (stamp == cachedStamp) return cached
+        val m = LinkedHashMap<String, String>()
+        f.forEachLine { line ->
+            if (line.isBlank() || (line.startsWith("#") && !line.startsWith("#HttpOnly_"))) return@forEachLine
+            val p = line.split('\t')
+            if (p.size >= 7 && p[0].contains("youtube.com")) m[p[5]] = p[6]
+        }
+        cached = m.ifEmpty { null }
+        cachedStamp = stamp
+        return cached
+    }
+
     val isSignedIn: Boolean
-        get() = file.exists() && file.readText().let { it.contains("SAPISID") || it.contains("LOGIN_INFO") }
+        get() = map()?.let { it.containsKey("SAPISID") || it.containsKey("__Secure-3PAPISID") || it.containsKey("LOGIN_INFO") } == true
 
     /** True once the WebView holds a signed-in YouTube session. */
     fun webViewHasSession(): Boolean {

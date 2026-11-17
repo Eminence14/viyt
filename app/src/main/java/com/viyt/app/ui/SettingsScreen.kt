@@ -129,7 +129,7 @@ fun SettingsScreen() {
                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
             }
         }) { Text(if (updating) "Updating" else "Update yt-dlp now") }
-        Text("viyt also checks for updates automatically every 6 hours.",
+        Text("Browsing and streaming use YouTube's API directly; yt-dlp is the backup and handles MP3. It updates itself every 12 hours.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp))
 

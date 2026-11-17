@@ -1,5 +1,6 @@
 package com.viyt.app.ui
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -167,14 +168,29 @@ fun ItemRow(item: Item, onOpen: (Item) -> Unit, onDownload: (Item) -> Unit) {
     }
 }
 
+/** Placeholder rows shaped like real ones, so the screen never looks blank while loading. */
 @Composable
 fun Loading() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(12.dp))
-            Text("Talking to YouTube", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall)
+    val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "pulse")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.35f, targetValue = 0.8f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "alpha",
+    )
+    val block = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha)
+    Column(Modifier.fillMaxSize()) {
+        repeat(8) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(156.dp).aspectRatio(16f / 9f).background(block, RoundedCornerShape(10.dp)))
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Box(Modifier.fillMaxWidth(0.9f).height(12.dp).background(block, RoundedCornerShape(4.dp)))
+                    Spacer(Modifier.height(6.dp))
+                    Box(Modifier.fillMaxWidth(0.6f).height(12.dp).background(block, RoundedCornerShape(4.dp)))
+                    Spacer(Modifier.height(8.dp))
+                    Box(Modifier.fillMaxWidth(0.35f).height(10.dp).background(block, RoundedCornerShape(4.dp)))
+                }
+            }
         }
     }
 }

@@ -75,12 +75,27 @@ class LoginActivity : ComponentActivity() {
                     "Chrome/131.0.0.0 Mobile Safari/537.36"
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = false
-                override fun onPageFinished(view: WebView, url: String) {
-                    if (url.contains("youtube.com") && Engine.cookies.webViewHasSession()) tryFinish(manual = false)
+                // Finish the moment the session cookie lands, without waiting for YouTube's heavy page to load.
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) = check(view)
+                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = check(view)
+                override fun onPageFinished(view: WebView, url: String) = check(view)
+            }
+            settings.loadsImagesAutomatically = true
+            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            loadUrl(LOGIN_URL)
+            // Also poll, since Google sometimes sets the cookie without a navigation event.
+            val tick = object : Runnable {
+                override fun run() {
+                    if (finished) return
+                    if (Engine.cookies.webViewHasSession()) { stopLoading(); tryFinish(manual = false) } else postDelayed(this, 400)
                 }
             }
-            loadUrl(LOGIN_URL)
+            postDelayed(tick, 400)
         }
+    }
+
+    private fun check(view: WebView) {
+        if (!finished && Engine.cookies.webViewHasSession()) { view.stopLoading(); tryFinish(manual = false) }
     }
 
     private fun tryFinish(manual: Boolean) {
@@ -88,7 +103,8 @@ class LoginActivity : ComponentActivity() {
         if (Engine.cookies.webViewHasSession()) {
             finished = true
             val n = Engine.cookies.saveFromWebView()
-            Toast.makeText(this, "Signed in ($n cookies saved)", Toast.LENGTH_SHORT).show()
+            Engine.clearCache()
+            Toast.makeText(this, "Signed in", Toast.LENGTH_SHORT).show()
             setResult(RESULT_OK)
             finish()
         } else if (manual) {
