@@ -263,7 +263,7 @@ fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
     Box(Modifier.fillMaxSize().background(MusicBg)) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
-                val search = { stack.add(MRoute.Search) }
+                val search: () -> Unit = { stack.add(MRoute.Search) }
                 when (val top = stack.lastOrNull()) {
                     MRoute.Search -> MusicSearch(a) { stack.removeAt(stack.lastIndex) }
                     is MRoute.Page -> PageScreen(top, a) { stack.removeAt(stack.lastIndex) }
