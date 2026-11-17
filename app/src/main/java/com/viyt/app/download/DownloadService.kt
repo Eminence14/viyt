@@ -55,7 +55,16 @@ class DownloadService : Service() {
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: url
                 val fmt = runCatching { DownloadFormat.valueOf(intent.getStringExtra(EXTRA_FORMAT)!!) }
                     .getOrDefault(DownloadFormat.BEST)
-                Downloads.add(DownloadTask(UUID.randomUUID().toString(), url, title, fmt))
+                val song = intent.getStringExtra(EXTRA_SONG)?.let { j ->
+                    runCatching {
+                        val o = org.json.JSONObject(j)
+                        SongMeta(o.getString("id"), o.getString("title"), o.optString("artist").ifEmpty { null },
+                            o.optString("album").ifEmpty { null }, o.optString("thumb").ifEmpty { null },
+                            o.optString("dur").ifEmpty { null }, o.optBoolean("mp3"))
+                    }.getOrNull()
+                }
+                if (song != null && Downloads.tasks.value.any { it.song?.videoId == song.videoId && it.active }) return START_NOT_STICKY
+                Downloads.add(DownloadTask(UUID.randomUUID().toString(), url, title, fmt, song = song))
             }
             ACTION_CANCEL -> {
                 val id = intent.getStringExtra(EXTRA_ID)
@@ -104,6 +113,7 @@ class DownloadService : Service() {
             }
         }
         try {
+            if (task.song != null) { runSong(task, tmp, canceled, report); return }
             // 1) Fast path: direct parallel download + native merge.
             val file = try {
                 if (task.format == DownloadFormat.MP3) throw IllegalStateException("MP3 goes through yt-dlp")
@@ -144,6 +154,46 @@ class DownloadService : Service() {
         } finally {
             tmp.deleteRecursively()
         }
+    }
+
+    /** Music: tagged audio with cover art, saved to Music/viyt/<album>, remembered for offline play. */
+    private suspend fun runSong(task: DownloadTask, tmp: File, canceled: () -> Boolean, report: (Float, String, Long) -> Unit) {
+        val song = task.song!!
+        val onProgress: (Float, Long, String) -> Unit = { progress, eta, line ->
+            val msg = when {
+                line.contains("[ExtractAudio]") || line.contains("[EmbedThumbnail]") || line.contains("[Metadata]") -> "Tagging"
+                progress > 0 -> "Downloading"
+                else -> "Preparing"
+            }
+            report((progress / 100f).coerceIn(0f, 1f), msg, eta)
+        }
+        try {
+            YoutubeDL.execute(Engine.ytdlpSongRequest(task.url, song.mp3, tmp, withArt = true), task.id, onProgress)
+        } catch (t: Throwable) {
+            if (canceled()) return
+            // Cover art is a nice-to-have; retry without it rather than fail the song.
+            tmp.listFiles()?.forEach { it.delete() }
+            YoutubeDL.execute(Engine.ytdlpSongRequest(task.url, song.mp3, tmp, withArt = false), task.id, onProgress)
+        }
+        if (canceled()) return
+        val file = tmp.listFiles()?.filter { it.isFile && (it.extension == "m4a" || it.extension == "mp3") }?.maxByOrNull { it.length() }
+            ?: throw IllegalStateException("No audio file was produced")
+        val name = listOfNotNull(song.artist, song.title).joinToString(" - ").replace(Regex("[\\\\/:*?\"<>|]"), " ").take(150) + "." + file.extension
+        val mime = if (file.extension == "mp3") "audio/mpeg" else "audio/mp4"
+        val folder = "Music/viyt" + (song.album?.let { "/" + it.replace(Regex("[\\\\/:*?\"<>|]"), " ").take(80) } ?: "")
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, folder)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: throw IllegalStateException("Couldn't create the song file")
+        contentResolver.openOutputStream(uri)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
+        values.clear(); values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        contentResolver.update(uri, values, null, null)
+        com.viyt.app.core.Offline.add(com.viyt.app.core.OfflineTrack(song.videoId, song.title, song.artist, song.album, song.thumb,
+            song.duration, uri.toString(), System.currentTimeMillis()))
+        Downloads.edit(task.id) { it.copy(status = DownloadTask.Status.DONE, progress = 1f, message = "Saved to $folder", resultUri = uri.toString(), mime = mime) }
     }
 
     /** Move the finished file into the public Download/viyt folder. */
@@ -206,6 +256,20 @@ class DownloadService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_FORMAT = "format"
         const val EXTRA_ID = "id"
+        const val EXTRA_SONG = "song"
+
+        /** Download a song (tagged, with cover art) for offline listening. */
+        fun enqueueSong(context: Context, t: com.viyt.app.core.Track, album: String?, mp3: Boolean = false) {
+            val meta = org.json.JSONObject().put("id", t.videoId).put("title", t.title).put("artist", t.artist ?: "")
+                .put("album", album ?: "").put("thumb", t.thumb ?: "").put("dur", t.duration ?: "").put("mp3", mp3)
+            val i = Intent(context, DownloadService::class.java)
+                .setAction(ACTION_ENQUEUE)
+                .putExtra(EXTRA_URL, "https://www.youtube.com/watch?v=${t.videoId}")
+                .putExtra(EXTRA_TITLE, listOfNotNull(t.artist, t.title).joinToString(" - "))
+                .putExtra(EXTRA_FORMAT, if (mp3) DownloadFormat.MP3.name else DownloadFormat.M4A.name)
+                .putExtra(EXTRA_SONG, meta.toString())
+            ContextCompat.startForegroundService(context, i)
+        }
 
         fun enqueue(context: Context, url: String, title: String, format: DownloadFormat) {
             val i = Intent(context, DownloadService::class.java)

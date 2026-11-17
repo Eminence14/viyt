@@ -35,8 +35,33 @@ data class MusicItem(
 /** A row of items with a title ("Quick picks", "Top songs", ...). [list] = shown as song rows. */
 data class Shelf(val title: String, val items: List<MusicItem>, val list: Boolean)
 
+/** A Home mood chip ("Energize", "Relax", ...). */
+data class MusicChip(val label: String, val params: String)
+
+data class MusicHome(val chips: List<MusicChip>, val shelves: List<Shelf>)
+
+/** A "Moods & genres" button. */
+data class Mood(val label: String, val color: Long, val browseId: String, val params: String?)
+data class MoodGroup(val title: String, val moods: List<Mood>)
+
+/** Per-song extras from the watch panel: lyrics/related pages and your like. */
+data class TrackMeta(val lyricsId: String?, val relatedId: String?, val liked: Boolean)
+
+data class Lyrics(val text: String, val source: String?)
+
 /** Album, playlist or artist page. */
-data class MusicPage(val title: String, val subtitle: String?, val thumb: String?, val kind: MusicItem.Kind, val shelves: List<Shelf>) {
+data class MusicPage(
+    val title: String,
+    val subtitle: String?,
+    val thumb: String?,
+    val kind: MusicItem.Kind,
+    val shelves: List<Shelf>,
+    val channelId: String? = null,
+    val subscribed: Boolean = false,
+    /** Playlist id to save/like this album or playlist. */
+    val playlistId: String? = null,
+    val description: String? = null,
+) {
     val tracks get() = shelves.firstOrNull { s -> s.list && s.items.any { it.playable } }?.items?.filter { it.playable }.orEmpty()
 }
 
@@ -111,19 +136,111 @@ object Music {
 
     // ------------------------------------------------------------------ screens
 
-    /** Home: first page plus two "load more" pages of shelves. */
-    suspend fun home(fresh: Boolean = false): List<Shelf> = cached("home", fresh) {
-        val first = post("browse", JSONObject().put("browseId", "FEmusic_home"))
+    /** Home: first page plus two "load more" pages of shelves, and the mood chips. [params] = a chip. */
+    suspend fun home(fresh: Boolean = false, params: String? = null): MusicHome = cached("home:$params", fresh) {
+        val body = JSONObject().put("browseId", "FEmusic_home")
+        if (params != null) body.put("params", params)
+        val first = post("browse", body)
+        val chips = ArrayList<MusicChip>()
+        walk(first, "chipCloudChipRenderer") { c ->
+            val label = text(c.opt("text")) ?: return@walk
+            val p = findObj(c.optJSONObject("navigationEndpoint"), "browseEndpoint")?.optString("params")?.ifEmpty { null } ?: return@walk
+            chips.add(MusicChip(label, p))
+        }
         val out = ArrayList(shelves(first))
         var token = sectionToken(first)
         var n = 0
-        while (token != null && n < 2) {
-            val more = post("browse", JSONObject(), "&ctoken=$token&continuation=$token&type=next")
+        while (token != null && n < 3) {
+            val more = post("browse", JSONObject().put("continuation", token))
             out.addAll(shelves(more))
             token = sectionToken(more)
             n++
         }
-        out.filter { it.items.isNotEmpty() }
+        MusicHome(chips, out.filter { it.items.isNotEmpty() })
+    }
+
+    /** Explore's "Moods & genres" buttons. */
+    suspend fun moods(fresh: Boolean = false): List<MoodGroup> = cached("moods", fresh) {
+        val json = post("browse", JSONObject().put("browseId", "FEmusic_moods_and_genres"))
+        val out = ArrayList<MoodGroup>()
+        walk(json, "gridRenderer") { g ->
+            val title = text(findObj(g.optJSONObject("header"), "title")) ?: ""
+            val moods = ArrayList<Mood>()
+            val arr = g.optJSONArray("items")
+            if (arr != null) for (i in 0 until arr.length()) {
+                val b2 = arr.optJSONObject(i)?.optJSONObject("musicNavigationButtonRenderer") ?: continue
+                val be = findObj(b2.optJSONObject("clickCommand"), "browseEndpoint") ?: continue
+                moods.add(Mood(text(b2.opt("buttonText")) ?: continue, b2.optJSONObject("solid")?.optLong("leftStripeColor") ?: 0xFF888888,
+                    be.optString("browseId"), be.optString("params").ifEmpty { null }))
+            }
+            if (moods.isNotEmpty()) out.add(MoodGroup(title, moods))
+        }
+        out
+    }
+
+    suspend fun trackMeta(videoId: String): TrackMeta = cached("meta:$videoId", false, ttl = 60 * 60_000L) {
+        val json = post("next", JSONObject().put("videoId", videoId).put("isAudioOnly", true).put("enablePersistentPlaylistPanel", true))
+        var lyrics: String? = null
+        var related: String? = null
+        walk(findObj(json, "watchNextTabbedResultsRenderer"), "tabRenderer") { t ->
+            val be = findObj(t.optJSONObject("endpoint"), "browseEndpoint") ?: return@walk
+            val type = findString(be, "pageType").orEmpty()
+            if (type.contains("LYRICS")) lyrics = be.optString("browseId")
+            if (type.contains("RELATED")) related = be.optString("browseId")
+        }
+        val liked = findObj(json, "likeButtonRenderer")?.optString("likeStatus") == "LIKE"
+        TrackMeta(lyrics, related, liked)
+    }
+
+    suspend fun lyrics(browseId: String): Lyrics? = cached("lyrics:$browseId", false, ttl = 24 * 3600_000L) {
+        val d = findObj(post("browse", JSONObject().put("browseId", browseId)), "musicDescriptionShelfRenderer")
+        val text = text(d?.opt("description"))
+        if (text == null) Lyrics("", null) else Lyrics(text.replace("\r", ""), text(d?.opt("footer")))
+    }.takeIf { it.text.isNotEmpty() }
+
+    suspend fun related(browseId: String): List<Shelf> = cached("related:$browseId", false) {
+        shelves(post("browse", JSONObject().put("browseId", browseId))).filter { it.items.isNotEmpty() }
+    }
+
+    // ------------------------------------------------------------------ your account (signed in)
+
+    private fun requireSignIn() { if (!Engine.signedIn) throw IllegalStateException("Sign in from Library to do this") }
+
+    suspend fun likeSong(videoId: String, on: Boolean) = withContext(Dispatchers.IO) {
+        requireSignIn()
+        post(if (on) "like/like" else "like/removelike", JSONObject().put("target", JSONObject().put("videoId", videoId)))
+        cache.remove("meta:$videoId"); cache.keys.filter { it.startsWith("page:VLLM") || it.startsWith("page:FEmusic_liked_videos") }.forEach { cache.remove(it) }
+        Unit
+    }
+
+    /** Save (like) an album or playlist to your library. */
+    suspend fun savePlaylist(playlistId: String, on: Boolean) = withContext(Dispatchers.IO) {
+        requireSignIn()
+        post(if (on) "like/like" else "like/removelike", JSONObject().put("target", JSONObject().put("playlistId", playlistId)))
+        cache.keys.filter { it.startsWith("page:FEmusic_liked") }.forEach { cache.remove(it) }
+        Unit
+    }
+
+    /** Your own playlists, for "Add to playlist". */
+    suspend fun myPlaylists(): List<MusicItem> = page("FEmusic_liked_playlists", fresh = true).shelves.flatMap { it.items }
+        .filter { it.kind == MusicItem.Kind.PLAYLIST && it.id.startsWith("VL") && !it.id.startsWith("VLLM") && !it.id.startsWith("VLSE") }
+
+    suspend fun addToPlaylist(playlistBrowseId: String, videoId: String) = withContext(Dispatchers.IO) {
+        requireSignIn()
+        val pid = playlistBrowseId.removePrefix("VL")
+        post("browse/edit_playlist", JSONObject().put("playlistId", pid)
+            .put("actions", JSONArray().put(JSONObject().put("action", "ACTION_ADD_VIDEO").put("addedVideoId", videoId).put("dedupeOption", "DEDUPE_OPTION_SKIP"))))
+        cache.remove("page:$playlistBrowseId:null")
+        Unit
+    }
+
+    suspend fun createPlaylist(title: String, videoId: String?) = withContext(Dispatchers.IO) {
+        requireSignIn()
+        val body = JSONObject().put("title", title).put("privacyStatus", "PRIVATE")
+        if (videoId != null) body.put("videoIds", JSONArray().put(videoId))
+        post("playlist/create", body)
+        cache.keys.filter { it.startsWith("page:FEmusic_liked_playlists") }.forEach { cache.remove(it) }
+        Unit
     }
 
     suspend fun explore(fresh: Boolean = false): List<Shelf> = cached("explore", fresh) {
@@ -134,9 +251,11 @@ object Music {
         shelves(post("search", JSONObject().put("query", query).put("params", filter.params))).flatMap { it.items }
     }
 
-    /** Album, playlist or artist page (also Liked songs "VLLM", Library "FEmusic_liked_playlists", "FEmusic_history"). */
-    suspend fun page(browseId: String, fresh: Boolean = false): MusicPage = cached("page:$browseId", fresh) {
-        val json = post("browse", JSONObject().put("browseId", browseId))
+    /** Album, playlist, artist, mood page (also Liked music "VLLM", library pages "FEmusic_*"). */
+    suspend fun page(browseId: String, params: String? = null, fresh: Boolean = false): MusicPage = cached("page:$browseId:$params", fresh) {
+        val body = JSONObject().put("browseId", browseId)
+        if (params != null) body.put("params", params)
+        val json = post("browse", body)
         val header = findObj(json, "musicResponsiveHeaderRenderer") ?: findObj(json, "musicImmersiveHeaderRenderer")
             ?: findObj(json, "musicVisualHeaderRenderer") ?: findObj(json, "musicDetailHeaderRenderer") ?: findObj(json, "musicHeaderRenderer")
         val title = text(header?.opt("title")) ?: ""
@@ -148,11 +267,19 @@ object Music {
             browseId.startsWith("UC") -> MusicItem.Kind.ARTIST
             else -> MusicItem.Kind.PLAYLIST
         }
-        // Album tracks carry no artwork of their own; use the album's.
+        val sb = findObj(header, "subscribeButtonRenderer")
+        val playlistId = when {
+            browseId.startsWith("VL") -> browseId.removePrefix("VL")
+            else -> findString(header?.optJSONObject("buttons") ?: header?.optJSONArray("buttons"), "playlistId")
+        }
+        val desc = text(findObj(header, "musicDescriptionShelfRenderer")?.opt("description")) ?: text(header?.opt("description"))
         val sh = shelves(json).map { s ->
             if (kind == MusicItem.Kind.ALBUM) s.copy(items = s.items.map { if (it.thumb == null) it.copy(thumb = art, subtitle = it.subtitle ?: strap) else it }) else s
         }
-        MusicPage(title, sub, art, kind, sh.filter { it.items.isNotEmpty() })
+        MusicPage(title, sub, art, kind, sh.filter { it.items.isNotEmpty() },
+            channelId = sb?.optString("channelId")?.ifEmpty { null } ?: if (kind == MusicItem.Kind.ARTIST) browseId else null,
+            subscribed = sb?.optBoolean("subscribed") ?: false,
+            playlistId = playlistId, description = desc)
     }
 
     /** A radio (endless mix) seeded from a song, or the tracks of a playlist. */

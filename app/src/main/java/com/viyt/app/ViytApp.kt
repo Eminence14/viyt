@@ -7,10 +7,12 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.viyt.app.core.Engine
 import com.viyt.app.core.InnerTube
+import com.viyt.app.core.Offline
 
 class ViytApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        Offline.init(this)
         Engine.start(this)
     }
 

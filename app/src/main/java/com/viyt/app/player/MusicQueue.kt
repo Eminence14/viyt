@@ -124,6 +124,50 @@ object MusicQueue {
         index.value = p.currentMediaItemIndex
     }
 
+    /** Drag-to-reorder in Up next. */
+    fun move(ctx: Context, from: Int, to: Int) {
+        val p = PlayerHolder.get(ctx)
+        val n = p.mediaItemCount
+        if (from !in 0 until n || to !in 0 until n || from == to) return
+        p.moveMediaItem(from, to)
+        tracks.value = tracks.value.toMutableList().apply { add(to, removeAt(from)) }
+        index.value = p.currentMediaItemIndex
+    }
+
+    // ------------------------------------------------------------------ sleep timer
+
+    /** When the music stops: epoch ms, -1 = at the end of the current song, null = off. */
+    val sleepAt = MutableStateFlow<Long?>(null)
+    private val handler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+    private var sleepTask: Runnable? = null
+    private var endOfSongListener: Player.Listener? = null
+
+    fun sleep(ctx: Context, minutes: Int?) {
+        val p = PlayerHolder.get(ctx)
+        sleepTask?.let { handler.removeCallbacks(it) }
+        endOfSongListener?.let { p.removeListener(it) }
+        sleepTask = null; endOfSongListener = null
+        when {
+            minutes == null -> sleepAt.value = null
+            minutes < 0 -> {
+                sleepAt.value = -1L
+                val l = object : Player.Listener {
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) { p.pause(); p.removeListener(this); sleepAt.value = null }
+                    }
+                }
+                endOfSongListener = l
+                p.addListener(l)
+            }
+            else -> {
+                sleepAt.value = System.currentTimeMillis() + minutes * 60_000L
+                val r = Runnable { p.pause(); sleepAt.value = null }
+                sleepTask = r
+                handler.postDelayed(r, minutes * 60_000L)
+            }
+        }
+    }
+
     private fun append(ctx: Context, more: List<Track>) {
         val existing = tracks.value.map { it.videoId }.toSet()
         val fresh = more.filter { it.videoId !in existing }

@@ -16,10 +16,22 @@ data class DownloadTask(
     val message: String? = null,
     val resultUri: String? = null,
     val mime: String? = null,
+    /** Set for music downloads: tagged audio saved to Music/viyt and kept for offline play. */
+    val song: SongMeta? = null,
 ) {
     enum class Status { QUEUED, RUNNING, DONE, FAILED, CANCELED }
     val active get() = status == Status.QUEUED || status == Status.RUNNING
 }
+
+data class SongMeta(
+    val videoId: String,
+    val title: String,
+    val artist: String?,
+    val album: String?,
+    val thumb: String?,
+    val duration: String?,
+    val mp3: Boolean,
+)
 
 /** In-memory download list shared by the service and the UI. */
 object Downloads {

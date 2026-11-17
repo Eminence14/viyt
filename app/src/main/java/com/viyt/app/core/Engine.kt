@@ -355,6 +355,25 @@ object Engine {
         }
     }
 
+    /** Song download: best audio as M4A/MP3 with title, artist, album and cover art written into the file. */
+    suspend fun ytdlpSongRequest(url: String, mp3: Boolean, outDir: File, withArt: Boolean): YoutubeDLRequest {
+        awaitYtdlp()
+        val r = base(url)
+            .addOption("--no-playlist").addOption("--no-mtime")
+            .addOption("-f", if (mp3) "ba" else "ba[ext=m4a]/ba")
+            .addOption("-x").addOption("--audio-format", if (mp3) "mp3" else "m4a")
+            .addOption("--embed-metadata")
+            .addOption("-o", File(outDir, "song.%(ext)s").absolutePath)
+        if (mp3) r.addOption("--audio-quality", "0")
+        if (withArt) {
+            r.addOption("--embed-thumbnail")
+            r.addOption("--convert-thumbnails", "jpg")
+            // Square cover art, like a real album sleeve.
+            r.addOption("--ppa", "ThumbnailsConvertor:-vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"")
+        }
+        return r
+    }
+
     suspend fun ytdlpDownloadRequest(url: String, format: DownloadFormat, outDir: File): YoutubeDLRequest {
         awaitYtdlp()
         val r = base(url)

@@ -11,6 +11,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -50,12 +51,13 @@ object PlayerHolder {
             .build()
         // Music queue items use "viyt://audio/<videoId>"; the real audio link is fetched only when
         // ExoPlayer is about to load that track (cached afterwards), so next/previous just work.
+        // Downloaded songs play from the phone; everything else streams.
         val resolving = ResolvingDataSource.Factory(
-            OkHttpDataSource.Factory(InnerTube.http).setUserAgent(InnerTube.PLAYER_UA)
+            DefaultDataSource.Factory(ctx, OkHttpDataSource.Factory(InnerTube.http).setUserAgent(InnerTube.PLAYER_UA))
         ) { spec ->
             if (spec.uri.scheme == "viyt") {
                 val id = spec.uri.lastPathSegment ?: throw java.io.IOException("Bad track")
-                spec.withUri(Uri.parse(MusicQueue.audioUrl(id)))
+                spec.withUri(Uri.parse(com.viyt.app.core.Offline.uriFor(id) ?: MusicQueue.audioUrl(id)))
             } else spec
         }
         return ExoPlayer.Builder(ctx)
