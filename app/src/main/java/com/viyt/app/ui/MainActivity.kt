@@ -67,6 +67,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import com.viyt.app.core.AppInfo
 import com.viyt.app.core.Engine
 import com.viyt.app.core.InnerTube
 import com.viyt.app.core.Item
@@ -96,8 +97,17 @@ class MainActivity : ComponentActivity() {
     private val listener = object : Player.Listener {
         override fun onRenderedFirstFrame() { Watch.firstFrame = true }
         override fun onTracksChanged(tracks: Tracks) = PlayerHolder.onTracksChanged(this@MainActivity)
-        override fun onPlayerError(error: PlaybackException) { Watch.error = "Playback stopped (${error.errorCodeName})" }
+        override fun onPlayerError(error: PlaybackException) {
+            if (AppInfo.vibe) {
+                // Like YouTube Music: say so, forget the bad link, and move on to the next song.
+                MusicUi.error = "Couldn't play this song, skipping"
+                val p = PlayerHolder.get(this@MainActivity)
+                p.currentMediaItem?.mediaId?.let { Engine.forgetStream("https://www.youtube.com/watch?v=$it") }
+                if (p.hasNextMediaItem()) { p.seekToNextMediaItem(); p.prepare(); p.play() }
+            } else Watch.error = "Playback stopped (${error.errorCodeName})"
+        }
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (AppInfo.vibe) return
             if (playbackState != Player.STATE_ENDED || !Engine.prefs.autoplay) return
             val p = PlayerHolder.get(this@MainActivity)
             if (p.repeatMode != Player.REPEAT_MODE_OFF || Watch.item == null) return
@@ -111,10 +121,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         PlayerHolder.get(this).addListener(listener)
         handleIntent(intent)
-        if (savedInstanceState == null && Engine.prefs.startTab == "MUSIC") MusicUi.on = true
         setContent {
             ViytTheme {
-                Surface(color = YtBg, contentColor = YtText) { App() }
+                Surface(color = YtBg, contentColor = YtText) {
+                    if (AppInfo.vibe) VibeApp() else App()
+                }
             }
         }
     }
@@ -127,7 +138,9 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         intent ?: return
         if (intent.getStringExtra(EXTRA_TAB) == "downloads") pendingUrl.value = "viyt:downloads"
-        if (intent.getBooleanExtra(EXTRA_EXPAND, false) && Watch.item != null) Watch.expanded = true
+        if (intent.getBooleanExtra(EXTRA_EXPAND, false)) {
+            if (AppInfo.vibe) MusicUi.nowPlaying = true else if (Watch.item != null) Watch.expanded = true
+        }
         if (intent.action == Intent.ACTION_VIEW) intent.data?.toString()?.let { pendingUrl.value = it }
         if (intent.action == Intent.ACTION_SEND) {
             Regex("https?://\\S+").find(intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty())?.value?.let { pendingUrl.value = it }
@@ -158,8 +171,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        // Only ViTube floats a window, and only for the video that is actually on screen and playing.
+        if (AppInfo.vibe) return
         val p = PlayerHolder.get(this)
-        if (Watch.item != null && p.isPlaying && !PlayerHolder.audioOnly.value) enterPip()
+        if (Watch.item != null && PlayerHolder.currentUrl.value == Watch.item?.url && p.isPlaying &&
+            PlayerHolder.current.value != null && !PlayerHolder.audioOnly.value) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -169,6 +185,12 @@ class MainActivity : ComponentActivity() {
         if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
             Watch.close()
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Shorts never play in the background (YouTube doesn't either).
+        ShortsPlayer.pause()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -183,7 +205,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         PlayerHolder.get(this).removeListener(listener)
-        if (isFinishing && (!Engine.prefs.backgroundPlay || !PlayerHolder.get(this).isPlaying)) Watch.close()
+        // Backing out of ViTube stops the video unless background play is on. ViVibe keeps the music
+        // playing (like YouTube Music); swiping the app away from recents stops it (PlaybackService).
+        if (!AppInfo.vibe && isFinishing && (!Engine.prefs.backgroundPlay || !PlayerHolder.get(this).isPlaying)) Watch.close()
         super.onDestroy()
     }
 
@@ -234,23 +258,17 @@ class MainActivity : ComponentActivity() {
         }
 
         val watching = Watch.item != null
-        val music = MusicUi.on
         BackHandler(enabled = watching && Watch.fullscreen) { setFullscreen(false) }
-        BackHandler(enabled = !music && watching && Watch.expanded && !Watch.fullscreen) { Watch.expanded = false }
-        BackHandler(enabled = !music && !(watching && Watch.expanded) && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+        BackHandler(enabled = watching && Watch.expanded && !Watch.fullscreen) { Watch.expanded = false }
+        BackHandler(enabled = !(watching && Watch.expanded) && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
         val startTab = runCatching { Tab.valueOf(Engine.prefs.startTab) }.getOrDefault(Tab.HOME)
-        BackHandler(enabled = !music && !(watching && Watch.expanded) && stack.isEmpty() && tab != startTab) { tab = startTab }
+        BackHandler(enabled = !(watching && Watch.expanded) && stack.isEmpty() && tab != startTab) { tab = startTab }
 
         // One video surface, moved between the watch page, mini player and PiP without restarting.
         val surface = remember { movableContentOf { VideoSurface(player) } }
         val nextUp = Watch.info?.related?.firstOrNull { it.kind == Item.Kind.VIDEO && !it.short }
-
-        val musicQueue by com.viyt.app.player.MusicQueue.tracks.collectAsState()
-        val playerMode by PlayerHolder.mode.collectAsState()
-        val musicPlaying = playerMode == PlayerHolder.Mode.MUSIC && musicQueue.isNotEmpty()
         when {
             inPip.value -> Box(Modifier.fillMaxSize().background(Color.Black)) { if (watching) surface() }
-            music -> MusicApp(onSwitch = { MusicUi.on = false }, onSignIn = signIn)
             watching && Watch.fullscreen -> PlayerBox(
                 player, surface, Modifier.fillMaxSize(),
                 onCollapse = { setFullscreen(false) }, onFullscreen = { setFullscreen(it) },
@@ -262,7 +280,6 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.weight(1f).fillMaxWidth().then(if (shortsFull) Modifier else Modifier.statusBarsPadding())) {
                         Screen(stack.lastOrNull(), tab, stack, a, openShorts, shortsQueue, shortsStart, signIn)
                     }
-                    if (musicPlaying && !watching && !shortsFull) MusicMini { MusicUi.on = true; MusicUi.nowPlaying = true }
                     if (watching && !Watch.expanded && !shortsFull) {
                         MiniPlayer(player, surface, onExpand = { Watch.expanded = true }, onClose = { Watch.close() })
                     }
@@ -281,6 +298,22 @@ class MainActivity : ComponentActivity() {
             }
         }
         more?.let { MoreSheet(it) { more = null } }
+    }
+
+    /** ViVibe: the music app, nothing else. */
+    @Composable
+    private fun VibeApp() {
+        val signIn = rememberSignIn()
+        val notif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+        LaunchedEffect(Unit) { if (Build.VERSION.SDK_INT >= 33) notif.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        val pending by pendingUrl
+        LaunchedEffect(pending) {
+            val u = pending ?: return@LaunchedEffect
+            pendingUrl.value = null
+            if (u == "viyt:downloads") return@LaunchedEffect
+            MusicUi.openLink(this@MainActivity, u)
+        }
+        MusicApp(onSignIn = signIn)
     }
 
     @Composable

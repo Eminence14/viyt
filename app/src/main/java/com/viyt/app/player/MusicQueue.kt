@@ -26,7 +26,7 @@ object MusicQueue {
     val tracks = MutableStateFlow<List<Track>>(emptyList())
     val index = MutableStateFlow(0)
     private var radioToken: String? = null
-    private var loadingMore = false
+    @Volatile private var loadingMore = false
     private var listening = false
 
     val current: Track? get() = tracks.value.getOrNull(index.value)
@@ -80,12 +80,16 @@ object MusicQueue {
     /** Play a song and keep going with an endless mix based on it. */
     fun playRadio(ctx: Context, seed: Track) {
         radioToken = null
+        // Block the automatic top-up while the radio's first page loads, so it isn't fetched twice.
+        loadingMore = true
         start(ctx, listOf(seed), 0)
         scope.launch {
-            runCatching { Music.radio(seed.videoId) }.onSuccess { r ->
-                radioToken = r.next
-                append(ctx, r.tracks.filter { it.videoId != seed.videoId })
-            }
+            try {
+                runCatching { Music.radio(seed.videoId) }.onSuccess { r ->
+                    radioToken = r.next
+                    append(ctx, r.tracks.filter { it.videoId != seed.videoId })
+                }
+            } finally { loadingMore = false }
         }
     }
 
@@ -109,6 +113,30 @@ object MusicQueue {
         if (PlayerHolder.mode.value != PlayerHolder.Mode.MUSIC || tracks.value.isEmpty()) { playRadio(ctx, t); return }
         PlayerHolder.get(ctx).addMediaItem(item(t))
         tracks.value = tracks.value + t
+    }
+
+    /**
+     * Swap the playing song between audio and its music video, in place, keeping the position.
+     * The video plays on the ViVibe player screen; the queue is unchanged.
+     */
+    suspend fun showVideo(ctx: Context, videoId: String, video: Boolean) {
+        val url = "https://www.youtube.com/watch?v=$videoId"
+        val stream = if (video) Engine.resolve(url, minOf(Engine.prefs.streamHeight, 720)) else null
+        kotlinx.coroutines.withContext(Dispatchers.Main) {
+            val p = PlayerHolder.get(ctx)
+            val i = p.currentMediaItemIndex
+            val t = tracks.value.getOrNull(i)
+            if (t == null || t.videoId != videoId) return@withContext
+            val pos = p.currentPosition
+            val play = p.playWhenReady
+            if (stream != null) {
+                p.addMediaSource(i + 1, PlayerHolder.source(url, stream, withCaptions = false))
+            } else p.addMediaItem(i + 1, item(t))
+            p.seekTo(i + 1, pos)
+            p.removeMediaItem(i)
+            index.value = p.currentMediaItemIndex
+            p.playWhenReady = play
+        }
     }
 
     fun jump(ctx: Context, i: Int) {
@@ -169,11 +197,12 @@ object MusicQueue {
     }
 
     private fun append(ctx: Context, more: List<Track>) {
-        val existing = tracks.value.map { it.videoId }.toSet()
-        val fresh = more.filter { it.videoId !in existing }
-        if (fresh.isEmpty()) return
         android.os.Handler(ctx.mainLooper).post {
             if (PlayerHolder.mode.value != PlayerHolder.Mode.MUSIC) return@post
+            // De-duplicate on the main thread, where the queue is changed, so two top-ups can't race.
+            val existing = tracks.value.mapTo(HashSet()) { it.videoId }
+            val fresh = more.filter { existing.add(it.videoId) }
+            if (fresh.isEmpty()) return@post
             PlayerHolder.get(ctx).addMediaItems(fresh.map(::item))
             tracks.value = tracks.value + fresh
         }

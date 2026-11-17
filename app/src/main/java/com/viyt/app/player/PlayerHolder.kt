@@ -64,7 +64,8 @@ object PlayerHolder {
             .setMediaSourceFactory(DefaultMediaSourceFactory(resolving))
             .setLoadControl(load)
             .setAudioAttributes(
-                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
+                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
+                    .setContentType(if (com.viyt.app.core.AppInfo.vibe) C.AUDIO_CONTENT_TYPE_MUSIC else C.AUDIO_CONTENT_TYPE_MOVIE).build(),
                 true,
             )
             .setHandleAudioBecomingNoisy(true)

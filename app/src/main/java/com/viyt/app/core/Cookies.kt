@@ -20,7 +20,8 @@ class Cookies(private val context: Context) {
     fun map(): Map<String, String>? {
         val f = file
         if (!f.exists()) return null
-        val stamp = f.lastModified()
+        // Time and size together: a sign-in within the same second still counts as a change.
+        val stamp = f.lastModified() * 31 + f.length()
         if (stamp == cachedStamp) return cached
         val m = LinkedHashMap<String, String>()
         f.forEachLine { line ->
@@ -85,6 +86,8 @@ class Cookies(private val context: Context) {
 
     fun signOut() {
         file.delete()
+        cached = null
+        cachedStamp = -1L
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
     }

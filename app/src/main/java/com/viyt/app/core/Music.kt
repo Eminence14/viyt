@@ -304,11 +304,11 @@ object Music {
         return findObj(sl.optJSONArray("continuations"), "nextContinuationData")?.optString("continuation")?.ifEmpty { null }
     }
 
-    private fun radioToken(json: JSONObject): String? =
+    internal fun radioToken(json: JSONObject): String? =
         findObj(json, "nextRadioContinuationData")?.optString("continuation")?.ifEmpty { null }
             ?: findObj(json.optJSONObject("continuationContents"), "nextContinuationData")?.optString("continuation")?.ifEmpty { null }
 
-    private fun panel(json: JSONObject): List<Track> {
+    internal fun panel(json: JSONObject): List<Track> {
         val out = ArrayList<Track>()
         walk(json, "playlistPanelVideoRenderer") { r ->
             val id = r.optString("videoId").ifEmpty { return@walk }
@@ -327,7 +327,7 @@ object Music {
         return out
     }
 
-    private fun shelves(json: JSONObject): List<Shelf> {
+    internal fun shelves(json: JSONObject): List<Shelf> {
         val out = ArrayList<Shelf>()
         fun go(n: Any?) {
             when (n) {

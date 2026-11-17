@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.viyt.app.core.AppInfo
 import com.viyt.app.core.DownloadFormat
 import com.viyt.app.core.Engine
 import kotlinx.coroutines.launch
@@ -83,15 +84,17 @@ fun SettingsScreen() {
             }
         }
 
+        // Video settings belong to ViTube only.
+        if (!AppInfo.vibe) {
         Divider()
         Section("Open app on")
         var start by remember { mutableStateOf(prefs.startTab) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("HOME" to "Home", "SUBS" to "Subscriptions", "YOU" to "You", "MUSIC" to "Music").forEach { (key, label) ->
+            listOf("HOME" to "Home", "SUBS" to "Subscriptions", "YOU" to "You").forEach { (key, label) ->
                 FilterChip(selected = start == key, onClick = { start = key; prefs.startTab = key }, label = { Text(label) })
             }
         }
-        Text("The page you land on every time you open viyt.", style = MaterialTheme.typography.bodySmall,
+        Text("The page you land on every time you open ViTube.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
 
         Divider()
@@ -123,8 +126,15 @@ fun SettingsScreen() {
                 FilterChip(selected = dl == f, onClick = { dl = f; prefs.defaultDownload = f }, label = { Text(f.label) })
             }
         }
-        Text("Files are saved to Download/viyt.", style = MaterialTheme.typography.bodySmall,
+        Text("Files are saved to Download/ViTube.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+
+        } else {
+            Divider()
+            Section("Downloads")
+            Text("Downloaded songs are saved to Music/ViVibe and play without internet.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
         Divider()
         Section("Engine")
@@ -157,7 +167,7 @@ fun SettingsScreen() {
 
         Divider()
         Section("About")
-        Text("viyt: no ads, no trackers. Streams and downloads run on your phone with yt-dlp.",
+        Text("${AppInfo.name}: no ads, no trackers. Streams and downloads run on your phone with yt-dlp.",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

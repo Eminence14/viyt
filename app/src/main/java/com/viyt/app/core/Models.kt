@@ -44,7 +44,10 @@ fun JSONObject.optStringOrNull(k: String): String? = if (isNull(k)) null else op
 /** A home-feed filter chip ("All", "Music", "Gaming", ...). [token] null means the unfiltered feed. */
 data class Chip(val label: String, val token: String?, val query: String? = null)
 
-data class Feed(val items: List<Item>, val chips: List<Chip> = emptyList())
+/** Where the next page of a feed comes from (YouTube's continuation token and the endpoint it belongs to). */
+data class Cont(val endpoint: String, val token: String)
+
+data class Feed(val items: List<Item>, val chips: List<Chip> = emptyList(), val next: Cont? = null)
 
 data class Comment(
     val author: String,
@@ -118,4 +121,11 @@ fun Long.asDuration(): String {
     val m = (this % 3600) / 60
     val s = this % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** Videos not shown last time come first, so pulling to refresh always brings something new to the top. */
+fun newFirst(items: List<Item>, seen: Set<String>): List<Item> {
+    if (seen.isEmpty()) return items
+    val (old, new) = items.partition { it.id in seen }
+    return new + old
 }

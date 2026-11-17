@@ -117,6 +117,8 @@ object FastDownload {
             .apply { headers.forEach { (k, v) -> header(k, v) } }.build()
         InnerTube.http.newCall(req).execute().use { r ->
             if (r.code != 206 && r.code != 200) throw IOException("HTTP ${r.code}")
+            // A 200 means the server ignored the range and is sending the whole file from byte 0.
+            if (r.code == 200 && from > 0) throw IOException("Server ignored the byte range")
             val body = r.body ?: throw IOException("Empty body")
             RandomAccessFile(file, "rw").use { raf ->
                 raf.seek(from)
@@ -126,7 +128,7 @@ object FastDownload {
                 val expected = to - from + 1
                 while (written < expected) {
                     if (canceled()) throw Canceled()
-                    val n = input.read(buf)
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), expected - written).toInt())
                     if (n < 0) break
                     raf.write(buf, 0, n)
                     written += n

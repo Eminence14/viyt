@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,7 +102,29 @@ class FeedHolder(initial: Feed?) {
     var refreshing by mutableStateOf(false)
     var trigger by mutableIntStateOf(0)
     var fresh = false
+    var loadingMore by mutableStateOf(false)
     fun refresh() { fresh = true; refreshing = true; trigger++ }
+
+    /** Fetch the next page (infinite scroll) and append what's new. */
+    suspend fun loadMore() {
+        val f = feed ?: return
+        val next = f.next ?: return
+        if (loadingMore || refreshing) return
+        loadingMore = true
+        try {
+            val page = Engine.more(next)
+            val cur = feed ?: return
+            if (cur.next != next) return // refreshed meanwhile
+            val have = cur.items.mapTo(HashSet()) { it.kind.name + it.id }
+            val add = page.items.filter { have.add(it.kind.name + it.id) }
+            // Stop when YouTube keeps sending the same videos.
+            feed = cur.copy(items = cur.items + add, next = if (add.isEmpty()) null else page.next)
+        } catch (_: Throwable) {
+            // Scrolling again retries.
+        } finally {
+            loadingMore = false
+        }
+    }
 }
 
 @Composable
@@ -135,11 +160,27 @@ fun FeedList(
         when {
             list == null && h.error != null -> Message(h.error!!, "Retry") { h.refresh() }
             list == null -> Column { CardSkeletons(big) }
-            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                header?.invoke(this)
-                if (list.isEmpty()) item { Box(Modifier.fillMaxWidth().height(300.dp)) { Message(empty) } }
-                else if (body != null) body(list)
-                else items(list, key = { it.kind.name + it.id }) { ItemView(it, a, big) }
+            else -> {
+                val state = rememberLazyListState()
+                // Near the end of the list, fetch the next page, like YouTube's endless feed.
+                LaunchedEffect(state, h) {
+                    snapshotFlow {
+                        val info = state.layoutInfo
+                        val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        info.totalItemsCount > 0 && last >= info.totalItemsCount - 6
+                    }.collect { near -> if (near) h.loadMore() }
+                }
+                LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(bottom = 16.dp)) {
+                    header?.invoke(this)
+                    if (list.isEmpty()) item { Box(Modifier.fillMaxWidth().height(300.dp)) { Message(empty) } }
+                    else if (body != null) body(list)
+                    else items(list.distinctBy { it.kind.name + it.id }, key = { it.kind.name + it.id }) { ItemView(it, a, big) }
+                    if (h.feed?.next != null && list.isNotEmpty()) item(key = "more") {
+                        Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = YtSecondary, strokeWidth = 2.dp, modifier = Modifier.size(26.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -149,14 +190,11 @@ fun FeedList(
 
 @Composable
 fun Logo() {
-    // Tap the logo to switch to viyt Music.
-    Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { MusicUi.on = true }.padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(width = 30.dp, height = 21.dp).background(YtRed, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(17.dp))
         }
-        Text("viyt", fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp, modifier = Modifier.padding(start = 3.dp))
-        Icon(Icons.Outlined.KeyboardArrowDown, "Switch to Music", tint = YtSecondary, modifier = Modifier.size(18.dp))
+        Text("ViTube", fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp, modifier = Modifier.padding(start = 4.dp))
     }
 }
 
@@ -488,7 +526,7 @@ fun SearchScreen(initial: String, a: Actions, onBack: () -> Unit) {
                     FeedList(h, big = false, a = a)
                 } else Message("Opening link…")
             } else {
-                val h = rememberFeed("search:$q", "search:$q") { _ -> Engine.search(q) }
+                val h = rememberFeed("search:$q", "search:$q") { fresh -> Engine.search(q, fresh) }
                 FeedList(h, big = true, a = a, empty = "No results for \"$q\"")
             }
         }

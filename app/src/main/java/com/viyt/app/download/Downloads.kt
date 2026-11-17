@@ -16,7 +16,7 @@ data class DownloadTask(
     val message: String? = null,
     val resultUri: String? = null,
     val mime: String? = null,
-    /** Set for music downloads: tagged audio saved to Music/viyt and kept for offline play. */
+    /** Set for music downloads: tagged audio saved to Music/ViVibe and kept for offline play. */
     val song: SongMeta? = null,
 ) {
     enum class Status { QUEUED, RUNNING, DONE, FAILED, CANCELED }

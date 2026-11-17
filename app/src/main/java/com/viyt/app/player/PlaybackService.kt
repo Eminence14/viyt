@@ -33,6 +33,7 @@ class PlaybackService : MediaSessionService() {
         PlayerHolder.shutdown()
         com.viyt.app.ui.Watch.detach()
         com.viyt.app.ui.MusicUi.nowPlaying = false
+        com.viyt.app.ui.MusicUi.videoOf = null
         com.viyt.app.ui.ShortsPlayer.pause()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

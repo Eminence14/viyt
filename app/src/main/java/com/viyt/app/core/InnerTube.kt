@@ -120,25 +120,43 @@ object InnerTube {
 
     // ------------------------------------------------------------------ lists
 
-    /** First page of a feed, with its filter chips (Home has them). */
+    /** First page of a feed, with its filter chips (Home has them) and the token for the next page. */
     fun browsePage(browseId: String, params: String?, limit: Int, cookies: Map<String, String>?): Feed {
         val body = JSONObject().put("browseId", browseId)
         if (params != null) body.put("params", params)
         val first = postWeb("browse", body, cookies)
-        return Feed(pagedFrom(first, "browse", limit, cookies), chips(first))
+        return pagedFrom(first, "browse", limit, cookies).copy(chips = chips(first))
     }
 
     fun browse(browseId: String, params: String?, limit: Int, cookies: Map<String, String>?): List<Item> =
         browsePage(browseId, params, limit, cookies).items
 
     /** Items behind a chip or any continuation token. */
-    fun continueWith(token: String, limit: Int, cookies: Map<String, String>?): List<Item> =
+    fun continueWith(token: String, limit: Int, cookies: Map<String, String>?): Feed =
         pagedFrom(postWeb("browse", JSONObject().put("continuation", token), cookies), "browse", limit, cookies)
 
-    fun search(query: String, limit: Int, cookies: Map<String, String>?): List<Item> =
+    fun searchPage(query: String, limit: Int, cookies: Map<String, String>?): Feed =
         pagedFrom(postWeb("search", JSONObject().put("query", query), cookies), "search", limit, cookies)
 
-    private fun pagedFrom(first: JSONObject, endpoint: String, limit: Int, cookies: Map<String, String>?): List<Item> {
+    fun search(query: String, limit: Int, cookies: Map<String, String>?): List<Item> = searchPage(query, limit, cookies).items
+
+    /** One more page of any feed (infinite scroll). */
+    fun more(next: Cont, cookies: Map<String, String>?): Feed {
+        val json = postWeb(next.endpoint, JSONObject().put("continuation", next.token), cookies)
+        return parsePage(json, next.endpoint)
+    }
+
+    /** Items and next-page token of one response. Pure parsing, no network (unit tested). */
+    fun parsePage(json: JSONObject, endpoint: String): Feed {
+        val out = LinkedHashMap<String, Item>()
+        collect(json, out)
+        return Feed(out.values.toList(), emptyList(), continuation(json)?.let { Cont(endpoint, it) })
+    }
+
+    /** Chips of a response (Home, search). Pure parsing (unit tested). */
+    fun parseChips(json: JSONObject): List<Chip> = chips(json)
+
+    private fun pagedFrom(first: JSONObject, endpoint: String, limit: Int, cookies: Map<String, String>?): Feed {
         val out = LinkedHashMap<String, Item>()
         collect(first, out)
         var token = continuation(first)
@@ -147,11 +165,11 @@ object InnerTube {
             val json = postWeb(endpoint, JSONObject().put("continuation", token), cookies)
             val before = out.size
             collect(json, out)
-            if (out.size == before) break
             token = continuation(json)
             pages++
+            if (out.size == before) break
         }
-        return out.values.take(limit)
+        return Feed(out.values.toList(), emptyList(), token?.let { Cont(endpoint, it) })
     }
 
     private fun chips(json: JSONObject): List<Chip> {
@@ -166,8 +184,12 @@ object InnerTube {
 
     // Keys that never hold feed cards; skipping them keeps parsing fast and avoids menu junk.
     private val SKIP = setOf(
-        "topbar", "frameworkUpdates", "onResponseReceivedActions", "responseContext", "header",
+        "topbar", "frameworkUpdates", "responseContext", "header",
         "menu", "thumbnailOverlays", "trackingParams", "overlay", "sheetViewModel", "loggingDirectives",
+        // Ads: sponsored search results and in-feed ads carry ordinary video cards inside.
+        "searchPyvRenderer", "adSlotRenderer", "promotedSparklesWebRenderer", "promotedVideoRenderer",
+        "compactPromotedVideoRenderer", "promotedSparklesTextSearchRenderer", "carouselAdRenderer",
+        "statementBannerRenderer", "bannerPromoRenderer", "inFeedAdLayoutRenderer",
     )
     private val VIDEO_KEYS = setOf(
         "videoRenderer", "compactVideoRenderer", "gridVideoRenderer", "playlistVideoRenderer",
@@ -302,8 +324,11 @@ object InnerTube {
     // ------------------------------------------------------------------ watch page
 
     /** Title, stats, channel, likes, comments preview and related videos, all from one request. */
-    fun watch(videoId: String, cookies: Map<String, String>?): WatchInfo {
-        val json = postWeb("next", JSONObject().put("videoId", videoId), cookies)
+    fun watch(videoId: String, cookies: Map<String, String>?): WatchInfo =
+        parseWatch(postWeb("next", JSONObject().put("videoId", videoId), cookies), videoId)
+
+    /** The watch page from a "next" response. Pure parsing (unit tested). */
+    fun parseWatch(json: JSONObject, videoId: String): WatchInfo {
         val two = json.optJSONObject("contents")?.optJSONObject("twoColumnWatchNextResults")
         val results = two?.optJSONObject("results")?.optJSONObject("results")
         val primary = findObj(results, "videoPrimaryInfoRenderer")
@@ -405,6 +430,10 @@ object InnerTube {
 
     fun like(videoId: String, on: Boolean, cookies: Map<String, String>) {
         postWeb(if (on) "like/like" else "like/removelike", JSONObject().put("target", JSONObject().put("videoId", videoId)), cookies)
+    }
+
+    fun dislike(videoId: String, on: Boolean, cookies: Map<String, String>) {
+        postWeb(if (on) "like/dislike" else "like/removelike", JSONObject().put("target", JSONObject().put("videoId", videoId)), cookies)
     }
 
     fun subscribe(channelId: String, on: Boolean, cookies: Map<String, String>) {

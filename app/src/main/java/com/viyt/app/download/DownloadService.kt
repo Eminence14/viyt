@@ -50,8 +50,8 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground(notification("Preparing download", null, 0f, true))
         when (intent?.action) {
-            ACTION_ENQUEUE -> {
-                val url = intent.getStringExtra(EXTRA_URL) ?: return START_NOT_STICKY
+            ACTION_ENQUEUE -> run {
+                val url = intent.getStringExtra(EXTRA_URL) ?: return@run
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: url
                 val fmt = runCatching { DownloadFormat.valueOf(intent.getStringExtra(EXTRA_FORMAT)!!) }
                     .getOrDefault(DownloadFormat.BEST)
@@ -63,7 +63,7 @@ class DownloadService : Service() {
                             o.optString("dur").ifEmpty { null }, o.optBoolean("mp3"))
                     }.getOrNull()
                 }
-                if (song != null && Downloads.tasks.value.any { it.song?.videoId == song.videoId && it.active }) return START_NOT_STICKY
+                if (song != null && Downloads.tasks.value.any { it.song?.videoId == song.videoId && it.active }) return@run
                 Downloads.add(DownloadTask(UUID.randomUUID().toString(), url, title, fmt, song = song))
             }
             ACTION_CANCEL -> {
@@ -87,14 +87,20 @@ class DownloadService : Service() {
     }
 
     private suspend fun drain() {
+        val finished = HashSet<String>()
         while (true) {
             val task = Downloads.nextQueued() ?: break
             runOne(task)
+            if (Downloads.get(task.id)?.status == DownloadTask.Status.DONE) finished.add(task.id)
         }
         runningId = null
-        stopForeground(STOP_FOREGROUND_DETACH)
-        val done = Downloads.tasks.value.count { it.status == DownloadTask.Status.DONE }
-        if (done > 0) nm.notify(NOTIF_DONE, notification("Downloads finished", "$done saved to Download/viyt", 1f, false))
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // Only what finished in this run, and where it actually went.
+        val n = finished.size
+        if (n > 0) {
+            val where = if (com.viyt.app.core.AppInfo.vibe) "Music/ViVibe" else "Download/ViTube"
+            nm.notify(NOTIF_DONE, notification("Downloads finished", "$n saved to $where", 1f, false))
+        }
         stopSelf()
     }
 
@@ -109,7 +115,7 @@ class DownloadService : Service() {
             val now = System.currentTimeMillis()
             if (now - lastNotify > 700) {
                 lastNotify = now
-                nm.notify(NOTIF_ID, notification(task.title, msg, p, false))
+                nm.notify(NOTIF_ID, notification(task.title, msg, p, false, cancelId = task.id))
             }
         }
         try {
@@ -144,7 +150,7 @@ class DownloadService : Service() {
             val mime = mimeOf(file)
             val uri = publish(file, mime)
             Downloads.edit(task.id) {
-                it.copy(status = DownloadTask.Status.DONE, progress = 1f, message = "Saved to Download/viyt",
+                it.copy(status = DownloadTask.Status.DONE, progress = 1f, message = "Saved to Download/ViTube",
                     resultUri = uri.toString(), mime = mime)
             }
         } catch (t: Throwable) {
@@ -156,7 +162,7 @@ class DownloadService : Service() {
         }
     }
 
-    /** Music: tagged audio with cover art, saved to Music/viyt/<album>, remembered for offline play. */
+    /** Music: tagged audio with cover art, saved to Music/ViVibe/<album>, remembered for offline play. */
     private suspend fun runSong(task: DownloadTask, tmp: File, canceled: () -> Boolean, report: (Float, String, Long) -> Unit) {
         val song = task.song!!
         val onProgress: (Float, Long, String) -> Unit = { progress, eta, line ->
@@ -180,7 +186,7 @@ class DownloadService : Service() {
             ?: throw IllegalStateException("No audio file was produced")
         val name = listOfNotNull(song.artist, song.title).joinToString(" - ").replace(Regex("[\\\\/:*?\"<>|]"), " ").take(150) + "." + file.extension
         val mime = if (file.extension == "mp3") "audio/mpeg" else "audio/mp4"
-        val folder = "Music/viyt" + (song.album?.let { "/" + it.replace(Regex("[\\\\/:*?\"<>|]"), " ").take(80) } ?: "")
+        val folder = "Music/ViVibe" + (song.album?.let { "/" + it.replace(Regex("[\\\\/:*?\"<>|]"), " ").take(80) } ?: "")
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
@@ -196,12 +202,12 @@ class DownloadService : Service() {
         Downloads.edit(task.id) { it.copy(status = DownloadTask.Status.DONE, progress = 1f, message = "Saved to $folder", resultUri = uri.toString(), mime = mime) }
     }
 
-    /** Move the finished file into the public Download/viyt folder. */
+    /** Move the finished file into the public Download/ViTube folder. */
     private fun publish(file: File, mime: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/viyt")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ViTube")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
@@ -223,7 +229,7 @@ class DownloadService : Service() {
         else -> "application/octet-stream"
     }
 
-    private fun notification(title: String, text: String?, progress: Float, indeterminate: Boolean): Notification {
+    private fun notification(title: String, text: String?, progress: Float, indeterminate: Boolean, cancelId: String? = null): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, "downloads"),
@@ -238,6 +244,17 @@ class DownloadService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(!finished)
             .apply { if (!finished) setProgress(100, (progress * 100).toInt(), indeterminate) }
+            .apply {
+                // Cancel straight from the notification, even after the app is closed.
+                if (cancelId != null) {
+                    val cancel = PendingIntent.getForegroundService(
+                        this@DownloadService, cancelId.hashCode(),
+                        Intent(this@DownloadService, DownloadService::class.java).setAction(ACTION_CANCEL).putExtra(EXTRA_ID, cancelId),
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    )
+                    addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancel)
+                }
+            }
             .build()
     }
 

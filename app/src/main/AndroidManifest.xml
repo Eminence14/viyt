@@ -25,24 +25,13 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
+            android:supportsPictureInPicture="${pip}"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Open YouTube links in viyt -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" />
-                <data android:host="www.youtube.com" />
-                <data android:host="m.youtube.com" />
-                <data android:host="youtube.com" />
-                <data android:host="youtu.be" />
-            </intent-filter>
-            <!-- Share a YouTube link from any app into viyt -->
+            <!-- Share a link from any app -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

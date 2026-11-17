@@ -14,6 +14,28 @@ android {
         targetSdk = 35
         versionCode = (System.getenv("VIYT_VERSION_CODE") ?: "1").toInt()
         versionName = "1.0.${System.getenv("VIYT_VERSION_CODE") ?: "0"}"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // Two apps from one codebase: ViTube (videos) and ViVibe (music).
+    flavorDimensions += "app"
+    productFlavors {
+        create("tube") {
+            dimension = "app"
+            // Same id as viyt, so ViTube installs as an update and keeps your sign-in and downloads.
+            applicationId = "com.viyt.app"
+            resValue("string", "app_name", "ViTube")
+            buildConfigField("boolean", "IS_VIBE", "false")
+            manifestPlaceholders["pip"] = "true"
+        }
+        create("vibe") {
+            dimension = "app"
+            applicationId = "com.viyt.vibe"
+            resValue("string", "app_name", "ViVibe")
+            buildConfigField("boolean", "IS_VIBE", "true")
+            // A music app never floats a video window.
+            manifestPlaceholders["pip"] = "false"
+        }
     }
 
     // viyt's own signing key, so every new build installs as an update.
@@ -63,6 +85,10 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
     lint {
         checkReleaseBuilds = false
@@ -101,4 +127,8 @@ dependencies {
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Unit tests run on the JVM; org.json replaces Android's stubbed copy there.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

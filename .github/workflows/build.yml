@@ -1,4 +1,4 @@
-name: Build viyt
+name: Build ViTube and ViVibe
 
 on:
   push:
@@ -51,32 +51,50 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      # Tests first: a failing test stops the release.
+      - name: Run unit tests
+        env:
+          VIYT_STORE_PASSWORD: ${{ secrets.VIYT_STORE_PASSWORD }}
+        run: gradle testTubeReleaseUnitTest --stacktrace
+
       - name: Build APKs
         env:
           VIYT_VERSION_CODE: ${{ github.run_number }}
           VIYT_STORE_PASSWORD: ${{ secrets.VIYT_STORE_PASSWORD }}
-        run: gradle assembleRelease --stacktrace
+        run: gradle assembleTubeRelease assembleVibeRelease --stacktrace
 
       - name: Rename APKs
         run: |
           mkdir -p out
-          for f in app/build/outputs/apk/release/*.apk; do
-            abi=$(basename "$f" | sed -E 's/app-(.*)-release\.apk/\1/')
-            cp "$f" "out/viyt-1.0.${{ github.run_number }}-$abi.apk"
+          for app in tube vibe; do
+            name=$([ "$app" = tube ] && echo ViTube || echo ViVibe)
+            for f in app/build/outputs/apk/$app/release/*.apk; do
+              abi=$(basename "$f" | sed -E "s/app-$app-(.*)-release\.apk/\1/")
+              cp "$f" "out/$name-1.0.${{ github.run_number }}-$abi.apk"
+            done
           done
           ls -la out
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: viyt-apks
+          name: test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks
           path: out/*.apk
 
       # Publish a release so the APK can be downloaded straight from a phone browser.
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: viyt 1.0.${{ github.run_number }}
+          name: ViTube + ViVibe 1.0.${{ github.run_number }}
           body: |
-            Install **viyt-…-arm64-v8a.apk** on most modern phones (Moto G86 included).
-            Use the armeabi-v7a APK only on older 32-bit phones.
+            Two apps: **ViTube** (YouTube) and **ViVibe** (YouTube Music). Install both if you want both.
+            On most modern phones (Moto G86 included) use the **arm64-v8a** APKs:
+            ViTube-…-arm64-v8a.apk and ViVibe-…-arm64-v8a.apk.
+            Use the armeabi-v7a APKs only on older 32-bit phones.
           files: out/*.apk

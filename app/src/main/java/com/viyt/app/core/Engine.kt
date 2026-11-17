@@ -81,6 +81,7 @@ object Engine {
 
     fun onAccountChanged() {
         clearCache()
+        Music.clear()
         File(app.cacheDir, "feeds2").deleteRecursively()
         accountVersion.value++
     }
@@ -135,21 +136,23 @@ object Engine {
      */
     suspend fun home(fresh: Boolean = false): Feed = cachedFeed("home", fresh) {
         val c = cookieMap()
+        // What Home showed last time, so a refresh can put videos you haven't seen yet first.
+        val before = (feeds["home"]?.value ?: peek("home"))?.items?.map { it.id }?.toSet().orEmpty()
         if (c != null) {
             val page = try {
-                InnerTube.browsePage("FEwhat_to_watch", null, 80, c)
+                InnerTube.browsePage("FEwhat_to_watch", null, 30, c)
             } catch (e: InnerTube.SessionExpired) {
                 throw e
             } catch (e: Exception) {
                 // One retry with a fresh visitor session before giving up.
                 InnerTube.renewVisitor()
-                InnerTube.browsePage("FEwhat_to_watch", null, 80, c)
+                InnerTube.browsePage("FEwhat_to_watch", null, 30, c)
             }
             if (page.items.isEmpty()) throw IllegalStateException(
                 "YouTube sent an empty Home for your account. This happens when watch history is turned off " +
                     "(turn it on at myactivity.google.com > YouTube History). Pull down to try again."
             )
-            page
+            if (fresh) page.copy(items = newFirst(page.items, before)) else page
         } else {
             // Signed out, YouTube's home is empty; build one from what's popular right now.
             val items = coroutineScope {
@@ -157,25 +160,27 @@ object Engine {
                     async { runCatching { InnerTube.search(q, 20, null) }.getOrDefault(emptyList()) }
                 }.awaitAll()
             }.let { lists -> interleave(lists) }
-            Feed(items, listOf(Chip("All", null)) + TOPICS.map { Chip(it, null, it) })
+            Feed(if (fresh) newFirst(items, before) else items, listOf(Chip("All", null)) + TOPICS.map { Chip(it, null, it) })
         }
     }
 
+    /** The next page of any feed, for infinite scroll. */
+    suspend fun more(next: Cont): Feed = withContext(Dispatchers.IO) { InnerTube.more(next, cookieMap()) }
+
     suspend fun chip(chip: Chip, fresh: Boolean = false): Feed = cachedFeed("chip:${chip.label}:${chip.token ?: chip.query}", fresh) {
-        val items = when {
-            chip.token != null -> InnerTube.continueWith(chip.token, 60, cookieMap())
-            chip.query != null -> InnerTube.search(chip.query, 40, cookieMap())
-            else -> emptyList()
+        when {
+            chip.token != null -> InnerTube.continueWith(chip.token, 30, cookieMap())
+            chip.query != null -> InnerTube.searchPage(chip.query, 30, cookieMap())
+            else -> Feed(emptyList())
         }
-        Feed(items)
     }
 
     suspend fun library(feed: LibraryFeed, fresh: Boolean = false): Feed = cachedFeed("lib:${feed.name}", fresh) {
-        Feed(fastOr({ InnerTube.browse(feed.browseId, null, 100, cookieMap()) }) { ytdlpList(feed.ytdlpUrl, 100) })
+        fastOr({ InnerTube.browsePage(feed.browseId, null, 60, cookieMap()).copy(chips = emptyList()) }) { Feed(ytdlpList(feed.ytdlpUrl, 100)) }
     }
 
-    suspend fun search(query: String): Feed = cachedFeed("search:$query", false) {
-        Feed(fastOr({ InnerTube.search(query, 40, cookieMap()) }) { ytdlpList("ytsearch40:$query", 40) })
+    suspend fun search(query: String, fresh: Boolean = false): Feed = cachedFeed("search:$query", fresh) {
+        fastOr({ InnerTube.searchPage(query, 30, cookieMap()) }) { Feed(ytdlpList("ytsearch40:$query", 40)) }
     }
 
     suspend fun suggest(query: String): List<String> =
@@ -197,20 +202,21 @@ object Engine {
 
     /** A playlist or channel URL. */
     suspend fun list(url: String, fresh: Boolean = false): Feed = cachedFeed("url:$url", fresh) {
-        Feed(fastOr({
+        fastOr({
             val c = cookieMap()
             val listId = Regex("[?&]list=([A-Za-z0-9_-]+)").find(url)?.groupValues?.get(1)
             val channelId = Regex("/channel/(UC[A-Za-z0-9_-]{22})").find(url)?.groupValues?.get(1)
-            when {
-                listId != null -> InnerTube.browse("VL$listId", null, 200, c)
-                channelId != null -> InnerTube.browse(channelId, CHANNEL_VIDEOS, 120, c)
+            val page = when {
+                listId != null -> InnerTube.browsePage("VL$listId", null, 100, c)
+                channelId != null -> InnerTube.browsePage(channelId, CHANNEL_VIDEOS, 60, c)
                 url.contains("/@") || url.contains("/c/") || url.contains("/user/") -> {
                     val id = InnerTube.resolveBrowseId(url.substringBefore("/videos"), c) ?: throw IllegalStateException("Channel not found")
-                    InnerTube.browse(id, CHANNEL_VIDEOS, 120, c)
+                    InnerTube.browsePage(id, CHANNEL_VIDEOS, 60, c)
                 }
                 else -> throw IllegalStateException("Not a list URL")
             }
-        }) { ytdlpList(url, 200) })
+            page.copy(chips = emptyList())
+        }) { Feed(ytdlpList(url, 200)) }
     }
 
     private const val CHANNEL_VIDEOS = "EgZ2aWRlb3PyBgQKAjoA"
@@ -245,6 +251,13 @@ object Engine {
     suspend fun like(videoId: String, on: Boolean): Unit = withContext(Dispatchers.IO) {
         val c = cookieMap() ?: throw IllegalStateException("Sign in to like videos")
         InnerTube.like(videoId, on, c)
+        watches.remove(videoId)
+        Unit
+    }
+
+    suspend fun dislike(videoId: String, on: Boolean): Unit = withContext(Dispatchers.IO) {
+        val c = cookieMap() ?: throw IllegalStateException("Sign in to dislike videos")
+        InnerTube.dislike(videoId, on, c)
         watches.remove(videoId)
         Unit
     }

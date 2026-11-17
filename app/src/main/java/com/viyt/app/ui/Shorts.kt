@@ -24,6 +24,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
+import android.widget.Toast
+import com.viyt.app.core.InnerTube
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -170,8 +174,25 @@ private fun ShortPage(item: Item, current: Boolean, player: ExoPlayer, a: Action
         // Right-hand actions
         Column(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            ShortAction(Icons.Outlined.ThumbUp, "Like") {}
-            ShortAction(Icons.Outlined.ThumbDown, "Dislike") {}
+            val scope = rememberCoroutineScope()
+            var rating by remember(item.id) { mutableStateOf(0) } // 1 liked, -1 disliked
+            val id = InnerTube.videoId(item.url) ?: item.id
+            fun rate(target: Int) {
+                if (!Engine.signedIn) { Toast.makeText(context, "Sign in to rate Shorts", Toast.LENGTH_SHORT).show(); return }
+                val before = rating
+                rating = if (rating == target) 0 else target
+                scope.launch {
+                    runCatching {
+                        when {
+                            rating == 1 -> Engine.like(id, true)
+                            rating == -1 -> Engine.dislike(id, true)
+                            else -> Engine.like(id, false)
+                        }
+                    }.onFailure { rating = before; Toast.makeText(context, Engine.friendly(it), Toast.LENGTH_SHORT).show() }
+                }
+            }
+            ShortAction(if (rating == 1) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, "Like") { rate(1) }
+            ShortAction(if (rating == -1) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown, "Dislike") { rate(-1) }
             ShortAction(Icons.Outlined.Share, "Share") { share(context, item.url) }
             ShortAction(Icons.Outlined.Download, "Download") { a.more(item) }
         }

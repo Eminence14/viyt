@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ClosedCaption
@@ -141,6 +142,8 @@ object Watch {
         Engine.prefetch(it.url)
         expanded = true
         if (item?.url == it.url && PlayerHolder.currentUrl.value == it.url) return
+        // Silence the previous video straight away instead of letting it play while the new one loads.
+        if (PlayerHolder.currentUrl.value != it.url) PlayerHolder.get(ctx).pause()
         item = it
         error = null
         info = null
@@ -544,21 +547,28 @@ private fun ChannelBar(item: Item, info: WatchInfo?) {
 private fun LikePill(info: WatchInfo?) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var liked by remember(info?.videoId) { mutableStateOf(info?.liked ?: false) }
+    // 1 liked, -1 disliked, 0 neither.
+    var rating by remember(info?.videoId) { mutableStateOf(if (info?.liked == true) 1 else 0) }
+    fun rate(target: Int) {
+        val id = info?.videoId ?: return
+        if (!Engine.signedIn) { Toast.makeText(context, "Sign in from the You tab to rate videos", Toast.LENGTH_SHORT).show(); return }
+        val before = rating
+        val now = if (rating == target) 0 else target
+        rating = now
+        scope.launch {
+            runCatching {
+                when (now) { 1 -> Engine.like(id, true); -1 -> Engine.dislike(id, true); else -> Engine.like(id, false) }
+            }.onFailure { rating = before; Toast.makeText(context, Engine.friendly(it), Toast.LENGTH_SHORT).show() }
+        }
+    }
     Row(Modifier.clip(RoundedCornerShape(50)).background(YtChip), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.clickable {
-            val id = info?.videoId ?: return@clickable
-            if (!Engine.signedIn) { Toast.makeText(context, "Sign in from the You tab to like videos", Toast.LENGTH_SHORT).show(); return@clickable }
-            val target = !liked
-            liked = target
-            scope.launch { runCatching { Engine.like(id, target) }.onFailure { liked = !target; Toast.makeText(context, Engine.friendly(it), Toast.LENGTH_SHORT).show() } }
-        }.padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, "Like", modifier = Modifier.size(18.dp))
+        Row(Modifier.clickable { rate(1) }.padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (rating == 1) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, "Like", modifier = Modifier.size(18.dp))
             Text(info?.likes ?: "Like", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 6.dp))
         }
         Box(Modifier.width(1.dp).height(20.dp).background(Color(0x33FFFFFF)))
-        Box(Modifier.clickable { }.padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)) {
-            Icon(Icons.Outlined.ThumbDown, "Dislike", modifier = Modifier.size(18.dp))
+        Box(Modifier.clickable { rate(-1) }.padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)) {
+            Icon(if (rating == -1) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown, "Dislike", modifier = Modifier.size(18.dp))
         }
     }
 }

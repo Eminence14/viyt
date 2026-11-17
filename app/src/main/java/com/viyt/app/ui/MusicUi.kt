@@ -63,6 +63,8 @@ import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.LibraryAddCheck
 import androidx.compose.material.icons.outlined.LibraryMusic
@@ -147,8 +149,32 @@ import kotlinx.coroutines.launch
 
 /** Music-mode UI state shared with the rest of the app. */
 object MusicUi {
-    var on by mutableStateOf(false)
     var nowPlaying by mutableStateOf(false)
+    /** The last playback problem, shown once as a message. */
+    var error by mutableStateOf<String?>(null)
+    /** An album, playlist or artist to open (from a shared music.youtube.com link). */
+    var pendingPage by mutableStateOf<Pair<String, String>?>(null)
+    /** Video mode: the current song plays as its music video inside the player screen. */
+    var videoOf by mutableStateOf<String?>(null)
+
+    /** Open a music.youtube.com (or youtube.com) link: play a song, or open its album, playlist or artist. */
+    fun openLink(ctx: Context, url: String) {
+        val id = com.viyt.app.core.InnerTube.videoId(url)
+        val list = Regex("[?&]list=([A-Za-z0-9_-]+)").find(url)?.groupValues?.get(1)
+        val browse = Regex("/(?:browse|channel)/([A-Za-z0-9_-]+)").find(url)?.groupValues?.get(1)
+        when {
+            id != null -> kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                val seed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { Music.radio(id).tracks.firstOrNull { it.videoId == id } }.getOrNull()
+                } ?: Track(id, "", null, "https://i.ytimg.com/vi/$id/hqdefault.jpg", null)
+                MusicQueue.playRadio(ctx, seed)
+                nowPlaying = true
+            }
+            list != null -> pendingPage = "VL$list" to "Playlist"
+            browse != null -> pendingPage = browse to ""
+            else -> pendingPage = null
+        }
+    }
 }
 
 private val MusicBg = Color(0xFF030303)
@@ -156,6 +182,7 @@ private val SheetBg = Color(0xFF1D1D1D)
 
 private sealed interface MRoute {
     data object Search : MRoute
+    data object Settings : MRoute
     data class Page(val browseId: String, val title: String, val params: String? = null) : MRoute
 }
 
@@ -211,14 +238,14 @@ private class MActions(
 private fun toast(ctx: Context, s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
 
 private fun playSong(ctx: Context, item: MusicItem) {
-    Watch.detach()
+
     MusicQueue.playRadio(ctx, item.toTrack())
     MusicUi.nowPlaying = true
 }
 
 private fun playTracks(ctx: Context, tracks: List<Track>, at: Int, shuffle: Boolean = false) {
     if (tracks.isEmpty()) return
-    Watch.detach()
+
     MusicQueue.playList(ctx, tracks, at, shuffle)
     MusicUi.nowPlaying = true
 }
@@ -238,7 +265,7 @@ private fun downloadAll(ctx: Context, items: List<MusicItem>, album: String?) {
 // ------------------------------------------------------------------ the Music app
 
 @Composable
-fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
+fun MusicApp(onSignIn: () -> Unit) {
     val ctx = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(MTab.HOME) }
     val stack = remember { mutableStateListOf<MRoute>() }
@@ -256,6 +283,18 @@ fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
         )
     }
 
+    // A shared link asked for an album, playlist or artist.
+    val pendingPage = MusicUi.pendingPage
+    LaunchedEffect(pendingPage) {
+        val (id, title) = pendingPage ?: return@LaunchedEffect
+        MusicUi.pendingPage = null
+        MusicUi.nowPlaying = false
+        stack.add(MRoute.Page(id, title))
+    }
+    // Playback problems show once.
+    val err = MusicUi.error
+    LaunchedEffect(err) { if (err != null) { toast(ctx, err); MusicUi.error = null } }
+
     androidx.activity.compose.BackHandler(enabled = MusicUi.nowPlaying) { MusicUi.nowPlaying = false }
     androidx.activity.compose.BackHandler(enabled = !MusicUi.nowPlaying && stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
     androidx.activity.compose.BackHandler(enabled = !MusicUi.nowPlaying && stack.isEmpty() && tab != MTab.HOME) { tab = MTab.HOME }
@@ -264,13 +303,15 @@ fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding()) {
                 val search: () -> Unit = { stack.add(MRoute.Search) }
+                val settings: () -> Unit = { stack.add(MRoute.Settings) }
                 when (val top = stack.lastOrNull()) {
                     MRoute.Search -> MusicSearch(a) { stack.removeAt(stack.lastIndex) }
+                    MRoute.Settings -> Column { BackTopBar("Settings", { stack.removeAt(stack.lastIndex) }); SettingsScreen() }
                     is MRoute.Page -> PageScreen(top, a) { stack.removeAt(stack.lastIndex) }
                     null -> when (tab) {
-                        MTab.HOME -> HomeTab(a, onSwitch, search)
-                        MTab.EXPLORE -> ExploreTab(a, onSwitch, search) { id, title, params -> stack.add(MRoute.Page(id, title, params)) }
-                        MTab.LIBRARY -> LibraryTab(a, onSwitch, search, onSignIn) { id, t -> stack.add(MRoute.Page(id, t)) }
+                        MTab.HOME -> HomeTab(a, settings, search)
+                        MTab.EXPLORE -> ExploreTab(a, settings, search) { id, title, params -> stack.add(MRoute.Page(id, title, params)) }
+                        MTab.LIBRARY -> LibraryTab(a, settings, search, onSignIn) { id, t -> stack.add(MRoute.Page(id, t)) }
                     }
                 }
             }
@@ -287,7 +328,7 @@ fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
                 }
             }
         }
-        if (MusicUi.nowPlaying && playing) Box(Modifier.fillMaxSize()) { NowPlaying(a, onVideo = onSwitch) }
+        if (MusicUi.nowPlaying && playing) Box(Modifier.fillMaxSize()) { NowPlaying(a) }
     }
     menu?.let { (item, album) -> SongMenu(item, album, a) { menu = null } }
 }
@@ -295,23 +336,22 @@ fun MusicApp(onSwitch: () -> Unit, onSignIn: () -> Unit) {
 // ------------------------------------------------------------------ top bar
 
 @Composable
-fun MusicLogo(onClick: () -> Unit) {
-    Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+fun MusicLogo() {
+    Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(26.dp).clip(CircleShape).background(YtRed), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(17.dp))
+            Icon(Icons.Filled.MusicNote, null, tint = Color.White, modifier = Modifier.size(16.dp))
         }
-        Text("Music", fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp, modifier = Modifier.padding(start = 5.dp))
-        Icon(Icons.Outlined.KeyboardArrowDown, "Switch to videos", tint = YtSecondary, modifier = Modifier.size(18.dp))
+        Text("ViVibe", fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp, modifier = Modifier.padding(start = 6.dp))
     }
 }
 
 @Composable
-private fun MusicTopBar(onSwitch: () -> Unit, onSearch: () -> Unit) {
+private fun MusicTopBar(onSettings: () -> Unit, onSearch: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(54.dp).padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        MusicLogo(onSwitch)
+        MusicLogo()
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, "Search music") }
+        IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "Settings") }
     }
 }
 
@@ -331,14 +371,14 @@ private fun ChipBar(labels: List<String>, selected: String?, onSelect: (String?)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeTab(a: MActions, onSwitch: () -> Unit, onSearch: () -> Unit) {
+private fun HomeTab(a: MActions, onSettings: () -> Unit, onSearch: () -> Unit) {
     var chip by rememberSaveable { mutableStateOf<String?>(null) }
     val base = rememberLoader("mhome") { f -> Music.home(f) }
     val chips = base.value?.chips.orEmpty()
     val params = chips.firstOrNull { it.label == chip }?.params
     val l = if (params == null) base else rememberLoader("mhome:$params") { f -> Music.home(f, params) }
     Column(Modifier.fillMaxSize()) {
-        MusicTopBar(onSwitch, onSearch)
+        MusicTopBar(onSettings, onSearch)
         if (chips.isNotEmpty()) ChipBar(chips.map { it.label }, chip) { chip = it }
         PullToRefreshBox(isRefreshing = l.refreshing, onRefresh = { l.refresh() }, modifier = Modifier.fillMaxSize()) {
             LoaderBox(l) { home ->
@@ -353,11 +393,11 @@ private fun HomeTab(a: MActions, onSwitch: () -> Unit, onSearch: () -> Unit) {
 // ------------------------------------------------------------------ Explore
 
 @Composable
-private fun ExploreTab(a: MActions, onSwitch: () -> Unit, onSearch: () -> Unit, openPage: (String, String, String?) -> Unit) {
+private fun ExploreTab(a: MActions, onSettings: () -> Unit, onSearch: () -> Unit, openPage: (String, String, String?) -> Unit) {
     val shelves = rememberLoader("mexplore") { f -> Music.explore(f) }
     val moods = rememberLoader("mmoods") { f -> Music.moods(f) }
     Column(Modifier.fillMaxSize()) {
-        MusicTopBar(onSwitch, onSearch)
+        MusicTopBar(onSettings, onSearch)
         LoaderBox(shelves) { list ->
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(list.size) { i -> ShelfView(list[i], a) }
@@ -544,11 +584,11 @@ private fun RoundAction(icon: ImageVector, label: String, onClick: () -> Unit) {
 private val LIB_CHIPS = listOf("Playlists", "Songs", "Albums", "Artists", "Downloaded")
 
 @Composable
-private fun LibraryTab(a: MActions, onSwitch: () -> Unit, onSearch: () -> Unit, onSignIn: () -> Unit, openPage: (String, String) -> Unit) {
+private fun LibraryTab(a: MActions, onSettings: () -> Unit, onSearch: () -> Unit, onSignIn: () -> Unit, openPage: (String, String) -> Unit) {
     var chip by rememberSaveable { mutableStateOf(if (Engine.signedIn) "Playlists" else "Downloaded") }
     var newPlaylist by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        MusicTopBar(onSwitch, onSearch)
+        MusicTopBar(onSettings, onSearch)
         ChipBar(LIB_CHIPS, chip) { chip = it ?: chip }
         when {
             chip == "Downloaded" -> DownloadedList(a)
@@ -733,7 +773,7 @@ private enum class NpTab { NONE, QUEUE, LYRICS, RELATED }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NowPlaying(a: MActions, onVideo: () -> Unit) {
+private fun NowPlaying(a: MActions) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val player = remember { PlayerHolder.get(ctx) }
@@ -751,6 +791,8 @@ private fun NowPlaying(a: MActions, onVideo: () -> Unit) {
     var tab by remember { mutableStateOf(NpTab.NONE) }
     var liked by remember(t.videoId) { mutableStateOf(false) }
     var addTo by remember { mutableStateOf(false) }
+    var switching by remember { mutableStateOf(false) }
+    val videoMode = MusicUi.videoOf == t.videoId
     LaunchedEffect(t.videoId) { runCatching { liked = Music.trackMeta(t.videoId).liked } }
     LaunchedEffect(Unit) {
         while (true) {
@@ -770,23 +812,39 @@ private fun NowPlaying(a: MActions, onVideo: () -> Unit) {
             IconButton(onClick = { MusicUi.nowPlaying = false }) { Icon(Icons.Outlined.KeyboardArrowDown, "Close") }
             Spacer(Modifier.weight(1f))
             Row(Modifier.clip(RoundedCornerShape(50)).background(Color(0x33000000)).padding(3.dp)) {
-                Text("Song", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MusicBg,
-                    modifier = Modifier.clip(RoundedCornerShape(50)).background(YtText).padding(horizontal = 16.dp, vertical = 6.dp))
-                Text("Video", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clip(RoundedCornerShape(50)).clickable {
-                    val at = player.currentPosition
-                    MusicUi.nowPlaying = false
-                    MusicUi.on = false
-                    onVideo()
-                    Watch.open(ctx, scope, Item(t.videoId, t.title, "https://www.youtube.com/watch?v=${t.videoId}", t.artist, null,
-                        "https://i.ytimg.com/vi/${t.videoId}/hqdefault.jpg", Item.Kind.VIDEO), startMs = at)
-                }.padding(horizontal = 16.dp, vertical = 6.dp))
+                Text("Song", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (videoMode) YtText else MusicBg,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (videoMode) Color.Transparent else YtText).clickable {
+                        if (!videoMode || switching) return@clickable
+                        switching = true
+                        scope.launch {
+                            runCatching { MusicQueue.showVideo(ctx, t.videoId, false) }
+                            MusicUi.videoOf = null
+                            switching = false
+                        }
+                    }.padding(horizontal = 16.dp, vertical = 6.dp))
+                Text("Video", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (videoMode) MusicBg else YtText,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (videoMode) YtText else Color.Transparent).clickable {
+                        if (videoMode || switching) return@clickable
+                        switching = true
+                        scope.launch {
+                            runCatching { MusicQueue.showVideo(ctx, t.videoId, true) }
+                                .onSuccess { MusicUi.videoOf = t.videoId }
+                                .onFailure { toast(ctx, "No video for this song") }
+                            switching = false
+                        }
+                    }.padding(horizontal = 16.dp, vertical = 6.dp))
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { a.more(item, null) }) { Icon(Icons.Outlined.MoreVert, "More") }
         }
         Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 28.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(YtChip)) {
+            if (videoMode) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color.Black)) {
+                    VideoSurface(player)
+                }
+            } else Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(YtChip)) {
                 AsyncImage(Music.big(t.thumb, 1080), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                if (switching) CircularProgressIndicator(color = YtText, modifier = Modifier.align(Alignment.Center))
             }
         }
         Column(Modifier.padding(horizontal = 28.dp)) {
@@ -1024,8 +1082,8 @@ private fun SongMenu(item: MusicItem, album: String?, a: MActions, onDismiss: ()
             }
             HorizontalDivider(color = YtDivider, modifier = Modifier.padding(vertical = 8.dp))
             MenuItem(Icons.Outlined.Radio, "Start radio") { playSong(ctx, item); onDismiss() }
-            MenuItem(Icons.AutoMirrored.Outlined.PlaylistPlay, "Play next") { Watch.detach(); MusicQueue.playNext(ctx, item.toTrack()); toast(ctx, "Plays next"); onDismiss() }
-            MenuItem(Icons.AutoMirrored.Outlined.QueueMusic, "Add to queue") { Watch.detach(); MusicQueue.addToQueue(ctx, item.toTrack()); toast(ctx, "Added to queue"); onDismiss() }
+            MenuItem(Icons.AutoMirrored.Outlined.PlaylistPlay, "Play next") { MusicQueue.playNext(ctx, item.toTrack()); toast(ctx, "Plays next"); onDismiss() }
+            MenuItem(Icons.AutoMirrored.Outlined.QueueMusic, "Add to queue") { MusicQueue.addToQueue(ctx, item.toTrack()); toast(ctx, "Added to queue"); onDismiss() }
             if (Engine.signedIn) {
                 MenuItem(if (liked == true) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, if (liked == true) "Remove from liked songs" else "Add to liked songs") {
                     val target = liked != true
