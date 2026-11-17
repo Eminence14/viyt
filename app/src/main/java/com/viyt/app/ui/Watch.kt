@@ -1,5 +1,7 @@
 package com.viyt.app.ui
 
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.runtime.Stable
 import android.content.Context
 import android.graphics.Color as AColor
 import android.util.TypedValue
@@ -647,10 +649,38 @@ private fun Stat(value: String, label: String) {
     }
 }
 
+/** One comment's replies, loaded page by page when opened. */
+@Stable
+private class Replies(token: String) {
+    var open by mutableStateOf(false)
+    var list by mutableStateOf<List<Comment>>(emptyList())
+    var next by mutableStateOf<String?>(token)
+    var loading by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+
+    suspend fun more() {
+        val t = next ?: return
+        if (loading) return
+        loading = true
+        error = null
+        try {
+            val (c, n) = Engine.comments(t)
+            list = list + c
+            next = n
+        } catch (e: Throwable) {
+            error = Engine.friendly(e)
+        } finally {
+            loading = false
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CommentsSheet(token: String, count: String?, onDismiss: () -> Unit) {
-    var list by remember { mutableStateOf<List<Comment>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    // Each comment with its replies holder (created here, never while the list is being laid out).
+    var list by remember { mutableStateOf<List<Pair<Comment, Replies?>>>(emptyList()) }
     var next by remember { mutableStateOf<String?>(token) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -659,14 +689,22 @@ private fun CommentsSheet(token: String, count: String?, onDismiss: () -> Unit) 
         val t = next ?: return
         if (loading) return
         loading = true
-        try { val (c, n) = Engine.comments(t); list = list + c; next = n } catch (e: Throwable) { error = Engine.friendly(e) }
+        error = null
+        try {
+            val (c, n) = Engine.comments(t)
+            list = list + c.map { it to it.repliesToken?.let { tok -> Replies(tok) } }
+            next = n
+        } catch (e: Throwable) { error = Engine.friendly(e) }
         loading = false
     }
     LaunchedEffect(Unit) { more() }
+    // Load the next page of comments near the end of the list.
     LaunchedEffect(state) {
-        snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
-            if (last >= list.size - 4) more()
-        }
+        snapshotFlow {
+            val info = state.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
+        }.collect { near -> if (near) more() }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = YtRaised, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding().fillMaxHeight(0.92f)) {
@@ -676,29 +714,86 @@ private fun CommentsSheet(token: String, count: String?, onDismiss: () -> Unit) 
             }
             HorizontalDivider(Modifier.padding(top = 12.dp), color = YtDivider)
             LazyColumn(Modifier.fillMaxSize(), state = state) {
-                items(list.size) { i -> CommentRow(list[i]) }
-                if (loading || (list.isEmpty() && error == null)) item {
+                list.forEachIndexed { i, (c, r) ->
+                    item(key = "c$i") { CommentRow(c, reply = false) }
+                    if (r == null) return@forEachIndexed
+                    item(key = "t$i") {
+                        RepliesToggle(c.replies, r.open) {
+                            r.open = !r.open
+                            if (r.open && r.list.isEmpty()) scope.launch { r.more() }
+                        }
+                    }
+                    if (r.open) {
+                        r.list.forEachIndexed { j, rc -> item(key = "r$i-$j") { CommentRow(rc, reply = true) } }
+                        item(key = "m$i") {
+                            when {
+                                r.loading -> Box(Modifier.fillMaxWidth().padding(start = 60.dp, top = 8.dp, bottom = 8.dp)) {
+                                    CircularProgressIndicator(color = YtText, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                                }
+                                r.error != null -> Text("${r.error}  Tap to retry", fontSize = 13.sp, color = YtSecondary,
+                                    modifier = Modifier.padding(start = 60.dp, top = 6.dp, bottom = 10.dp).clickable { scope.launch { r.more() } })
+                                r.next != null -> Text("Show more replies", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF3EA6FF),
+                                    modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 10.dp).clip(RoundedCornerShape(50))
+                                        .clickable { scope.launch { r.more() } }.padding(horizontal = 8.dp, vertical = 6.dp))
+                            }
+                        }
+                    }
+                }
+                if (loading || (list.isEmpty() && error == null && next != null)) item(key = "loading") {
                     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = YtText, modifier = Modifier.size(28.dp)) }
                 }
-                error?.let { e -> item { Text(e, color = YtSecondary, modifier = Modifier.padding(16.dp)) } }
+                if (!loading && list.isEmpty() && error == null && next == null) item(key = "none") {
+                    Text("No comments yet", color = YtSecondary, modifier = Modifier.padding(16.dp))
+                }
+                error?.let { e -> item(key = "error") {
+                    Text("$e  Tap to retry", color = YtSecondary, modifier = Modifier.padding(16.dp).clickable { scope.launch { more() } })
+                } }
             }
         }
     }
 }
 
+/** YouTube's blue "▾ 12 replies" link under a comment. */
 @Composable
-private fun CommentRow(c: Comment) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        Avatar(c.avatar, 32.dp)
+private fun RepliesToggle(count: String?, open: Boolean, onClick: () -> Unit) {
+    val n = count?.takeIf { it.isNotEmpty() && it != "0" }
+    val label = when {
+        n == null -> if (open) "Hide replies" else "Replies"
+        n == "1" -> "1 reply"
+        else -> "$n replies"
+    }
+    Row(Modifier.padding(start = 52.dp, bottom = 6.dp).clip(RoundedCornerShape(50)).clickable(onClick = onClick)
+        .padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (open) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, null, tint = Color(0xFF3EA6FF), modifier = Modifier.size(20.dp))
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF3EA6FF), modifier = Modifier.padding(start = 4.dp))
+    }
+}
+
+@Composable
+private fun CommentRow(c: Comment, reply: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+    var overflows by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(start = if (reply) 60.dp else 16.dp, end = 16.dp, top = if (reply) 6.dp else 10.dp, bottom = 6.dp)) {
+        Avatar(c.avatar, if (reply) 24.dp else 32.dp)
         Column(Modifier.padding(start = 12.dp)) {
-            Text(listOfNotNull(c.author, c.time).joinToString(" · "), fontSize = 12.sp, color = YtSecondary)
-            Text(c.text, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (c.byCreator) {
+                    Text(c.author, fontSize = 12.sp, color = YtText, modifier = Modifier.clip(RoundedCornerShape(50))
+                        .background(Color(0x33FFFFFF)).padding(horizontal = 6.dp, vertical = 1.dp))
+                    c.time?.let { Text(" · $it", fontSize = 12.sp, color = YtSecondary) }
+                } else Text(listOfNotNull(c.author, c.time).joinToString(" · "), fontSize = 12.sp, color = YtSecondary)
+            }
+            // Long comments fold after a few lines, like YouTube; tap to read the rest.
+            Text(c.text, fontSize = 14.sp, lineHeight = 20.sp, maxLines = if (expanded) Int.MAX_VALUE else 5,
+                overflow = TextOverflow.Ellipsis, onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
+                modifier = Modifier.padding(top = 2.dp).clickable(enabled = overflows || expanded) { expanded = !expanded })
+            if (overflows && !expanded) Text("Read more", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = YtSecondary,
+                modifier = Modifier.padding(top = 2.dp).clickable { expanded = true })
             Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.ThumbUp, null, modifier = Modifier.size(15.dp), tint = YtSecondary)
                 Text(" ${c.likes.orEmpty()}", fontSize = 12.sp, color = YtSecondary)
                 Spacer(Modifier.width(20.dp))
                 Icon(Icons.Outlined.ThumbDown, null, modifier = Modifier.size(15.dp), tint = YtSecondary)
-                c.replies?.takeIf { it != "0" }?.let { Text("     $it replies", fontSize = 12.sp, color = Color(0xFF3EA6FF), fontWeight = FontWeight.Medium) }
             }
         }
     }

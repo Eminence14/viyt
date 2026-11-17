@@ -380,34 +380,59 @@ object InnerTube {
         )
     }
 
-    /** One page of comments; returns them plus the token for the next page. */
-    fun comments(token: String, cookies: Map<String, String>?): Pair<List<Comment>, String?> {
-        val json = postWeb("next", JSONObject().put("continuation", token), cookies)
-        val out = ArrayList<Comment>()
+    /** One page of comments, or of one comment's replies; returns them plus the token for the next page. */
+    fun comments(token: String, cookies: Map<String, String>?): Pair<List<Comment>, String?> =
+        parseComments(postWeb("next", JSONObject().put("continuation", token), cookies))
+
+    /**
+     * Comments come as a list of threads (or, for replies, comment cards) that point by key to the
+     * comment text stored in frameworkUpdates. Each thread carries the token for its replies.
+     * Pure parsing (unit tested).
+     */
+    fun parseComments(json: JSONObject): Pair<List<Comment>, String?> {
+        val payloads = HashMap<String, JSONObject>()
         val muts = json.optJSONObject("frameworkUpdates")?.optJSONObject("entityBatchUpdate")?.optJSONArray("mutations")
-        if (muts != null) {
-            for (i in 0 until muts.length()) {
-                val c = muts.optJSONObject(i)?.optJSONObject("payload")?.optJSONObject("commentEntityPayload") ?: continue
-                val props = c.optJSONObject("properties")
-                val author = c.optJSONObject("author")
-                val toolbar = c.optJSONObject("toolbar")
-                if (props?.optInt("replyLevel", 0) != 0) continue
-                out.add(
-                    Comment(
-                        author = author?.optString("displayName").orEmpty(),
-                        avatar = author?.optString("avatarThumbnailUrl")?.ifEmpty { null },
-                        text = props?.optJSONObject("content")?.optString("content").orEmpty(),
-                        time = props?.optString("publishedTime")?.ifEmpty { null },
-                        likes = toolbar?.optString("likeCountNotliked")?.trim()?.ifEmpty { null },
-                        replies = toolbar?.optString("replyCount")?.trim()?.ifEmpty { null },
-                    )
-                )
-            }
+        if (muts != null) for (i in 0 until muts.length()) {
+            val p = muts.optJSONObject(i)?.optJSONObject("payload")?.optJSONObject("commentEntityPayload") ?: continue
+            payloads[p.optString("key")] = p
         }
-        // The "load more" token sits in the last continuation item of the response.
+        fun comment(p: JSONObject, repliesToken: String?): Comment {
+            val props = p.optJSONObject("properties")
+            val author = p.optJSONObject("author")
+            val toolbar = p.optJSONObject("toolbar")
+            return Comment(
+                author = author?.optString("displayName").orEmpty(),
+                avatar = author?.optString("avatarThumbnailUrl")?.ifEmpty { null },
+                text = props?.optJSONObject("content")?.optString("content").orEmpty(),
+                time = props?.optString("publishedTime")?.ifEmpty { null },
+                likes = toolbar?.optString("likeCountNotliked")?.trim()?.ifEmpty { null },
+                replies = toolbar?.optString("replyCount")?.trim()?.ifEmpty { null },
+                id = props?.optString("commentId").orEmpty(),
+                repliesToken = repliesToken,
+                byCreator = author?.optBoolean("isCreator", false) ?: false,
+            )
+        }
+        val out = ArrayList<Comment>()
         var next: String? = null
-        walkKey(json.optJSONArray("onResponseReceivedEndpoints"), "continuationItemRenderer") { r ->
-            if (r.optJSONObject("button") == null) next = firstString(r, "token")
+        val endpoints = json.optJSONArray("onResponseReceivedEndpoints")
+        if (endpoints != null) for (e in 0 until endpoints.length()) {
+            val ep = endpoints.optJSONObject(e) ?: continue
+            val action = ep.optJSONObject("appendContinuationItemsAction") ?: ep.optJSONObject("reloadContinuationItemsCommand") ?: continue
+            val items = action.optJSONArray("continuationItems") ?: continue
+            for (i in 0 until items.length()) {
+                val it = items.optJSONObject(i) ?: continue
+                it.optJSONObject("commentThreadRenderer")?.let { t ->
+                    val key = t.optJSONObject("commentViewModel")?.optJSONObject("commentViewModel")?.optString("commentKey")
+                    val p = payloads[key] ?: return@let
+                    out.add(comment(p, firstString(t.optJSONObject("replies"), "token")))
+                }
+                it.optJSONObject("commentViewModel")?.let { cv ->
+                    val p = payloads[cv.optString("commentKey")] ?: return@let
+                    out.add(comment(p, null))
+                }
+                // The next page: "load more" on scroll, or the "Show more replies" button.
+                it.optJSONObject("continuationItemRenderer")?.let { r -> next = firstString(r, "token") }
+            }
         }
         return out to next
     }

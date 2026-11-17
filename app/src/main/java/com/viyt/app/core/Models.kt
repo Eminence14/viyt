@@ -56,6 +56,11 @@ data class Comment(
     val time: String?,
     val likes: String?,
     val replies: String?,
+    val id: String = "",
+    /** Token that loads this comment's replies; null when it has none. */
+    val repliesToken: String? = null,
+    /** Posted by the video's channel. */
+    val byCreator: Boolean = false,
 )
 
 /** Everything on the watch page under the player, from one request. */
