@@ -19,7 +19,7 @@ object InnerTube {
 
     class SessionExpired : IOException("Your YouTube session expired. Sign in again from You > Settings.")
 
-    private const val WEB_VERSION = "2.20260708.00.00"
+    private const val WEB_VERSION = "2.20261116.00.00"
     private const val WEB_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -49,6 +49,9 @@ object InnerTube {
      * soon answers "Sign in to confirm you're not a bot".
      */
     @Volatile var visitorData: String? = null
+
+    /** Start a fresh visitor session (used when a request comes back wrong). */
+    fun renewVisitor() { visitor(refresh = true) }
 
     private fun visitor(refresh: Boolean = false): String? {
         if (!refresh) visitorData?.let { return it }

@@ -81,13 +81,13 @@ object Engine {
 
     fun onAccountChanged() {
         clearCache()
-        File(app.cacheDir, "feeds").deleteRecursively()
+        File(app.cacheDir, "feeds2").deleteRecursively()
         accountVersion.value++
     }
 
     // ---------------------------------------------------------------- feed cache (memory + disk)
 
-    private fun diskFile(key: String) = File(File(app.cacheDir, "feeds").apply { mkdirs() }, key.hashCode().toUInt().toString() + ".json")
+    private fun diskFile(key: String) = File(File(app.cacheDir, "feeds2").apply { mkdirs() }, key.hashCode().toUInt().toString() + ".json")
 
     /** Whatever we have for [key] right now, from memory or disk, however old. Instant. */
     fun peek(key: String): Feed? {
@@ -128,15 +128,33 @@ object Engine {
     /** Topics for the Home chips when YouTube has no personal feed (signed out). */
     private val TOPICS = listOf("Music", "Afrobeats", "News", "Football", "Gaming", "Comedy", "Podcasts", "Tech", "Nollywood", "Live")
 
+    /**
+     * Home is YouTube's own recommended feed for your account, the same one youtube.com shows,
+     * including channels you don't follow. It is never rebuilt from searches while you're signed in:
+     * if YouTube's feed can't be loaded, Home says so instead of showing a stand-in.
+     */
     suspend fun home(fresh: Boolean = false): Feed = cachedFeed("home", fresh) {
         val c = cookieMap()
-        val page = if (c != null) runCatching { InnerTube.browsePage("FEwhat_to_watch", null, 80, c) }.getOrNull() else null
-        if (page != null && page.items.size >= 6) page
-        else {
+        if (c != null) {
+            val page = try {
+                InnerTube.browsePage("FEwhat_to_watch", null, 80, c)
+            } catch (e: InnerTube.SessionExpired) {
+                throw e
+            } catch (e: Exception) {
+                // One retry with a fresh visitor session before giving up.
+                InnerTube.renewVisitor()
+                InnerTube.browsePage("FEwhat_to_watch", null, 80, c)
+            }
+            if (page.items.isEmpty()) throw IllegalStateException(
+                "YouTube sent an empty Home for your account. This happens when watch history is turned off " +
+                    "(turn it on at myactivity.google.com > YouTube History). Pull down to try again."
+            )
+            page
+        } else {
             // Signed out, YouTube's home is empty; build one from what's popular right now.
             val items = coroutineScope {
                 listOf("trending today", "new music this week", "news today").map { q ->
-                    async { runCatching { InnerTube.search(q, 20, c) }.getOrDefault(emptyList()) }
+                    async { runCatching { InnerTube.search(q, 20, null) }.getOrDefault(emptyList()) }
                 }.awaitAll()
             }.let { lists -> interleave(lists) }
             Feed(items, listOf(Chip("All", null)) + TOPICS.map { Chip(it, null, it) })
