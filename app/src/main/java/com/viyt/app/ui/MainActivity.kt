@@ -165,6 +165,10 @@ class MainActivity : ComponentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip.value = isInPictureInPictureMode
+        // Leaving the floating window without coming back to the app means it was dismissed (closed): stop the video.
+        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            Watch.close()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

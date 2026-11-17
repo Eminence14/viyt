@@ -166,4 +166,14 @@ object PlayerHolder {
         current.value = null
         currentUrl.value = null
     }
+
+    /** The app is being closed: stop everything (video and music) and forget the queue. */
+    fun shutdown() {
+        exo?.run { stop(); clearMediaItems() }
+        current.value = null
+        currentUrl.value = null
+        mode.value = Mode.VIDEO
+        MusicQueue.onVideoStarted()
+        MusicQueue.sleepAt.value = null
+    }
 }

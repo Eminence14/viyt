@@ -25,9 +25,17 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
+    /**
+     * The user swiped viyt away from recent apps: that means "close", so stop all playback,
+     * remove the notification and let the app shut down. (Minimising never reaches here.)
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        val p = session?.player
-        if (p == null || !p.playWhenReady || p.mediaItemCount == 0) stopSelf()
+        PlayerHolder.shutdown()
+        com.viyt.app.ui.Watch.detach()
+        com.viyt.app.ui.MusicUi.nowPlaying = false
+        com.viyt.app.ui.ShortsPlayer.pause()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
