@@ -224,13 +224,14 @@ object Engine {
     suspend fun comments(token: String): Pair<List<Comment>, String?> =
         withContext(Dispatchers.IO) { InnerTube.comments(token, cookieMap()) }
 
-    suspend fun like(videoId: String, on: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun like(videoId: String, on: Boolean): Unit = withContext(Dispatchers.IO) {
         val c = cookieMap() ?: throw IllegalStateException("Sign in to like videos")
         InnerTube.like(videoId, on, c)
         watches.remove(videoId)
+        Unit
     }
 
-    suspend fun subscribe(channelId: String, on: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun subscribe(channelId: String, on: Boolean): Unit = withContext(Dispatchers.IO) {
         val c = cookieMap() ?: throw IllegalStateException("Sign in to subscribe")
         InnerTube.subscribe(channelId, on, c)
         watches.clear()
