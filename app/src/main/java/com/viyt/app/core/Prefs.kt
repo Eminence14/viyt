@@ -40,4 +40,9 @@ class Prefs(context: Context) {
     /** Crop-to-fill instead of fit; observable so the player updates live. */
     val zoomState = mutableStateOf(sp.getBoolean("zoom", false))
     fun saveZoom(v: Boolean) { zoomState.value = v; sp.edit().putBoolean("zoom", v).apply() }
+
+    /** Play the next suggested video when one ends. */
+    var autoplay: Boolean
+        get() = sp.getBoolean("autoplay", true)
+        set(v) = sp.edit().putBoolean("autoplay", v).apply()
 }

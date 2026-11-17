@@ -62,41 +62,35 @@ object PlayerHolder {
             }
     }
 
-    /** Load a stream, keeping [startMs] (used when switching quality). */
-    fun load(context: Context, url: String, s: Stream, startMs: Long = 0L, play: Boolean = true) {
-        val p = get(context)
+    /** Build the media source for a stream (video + separate audio, merged; captions side-loaded). */
+    fun source(url: String, s: Stream, withCaptions: Boolean = true): MediaSource {
         val headers = s.headers
         val ds = OkHttpDataSource.Factory(InnerTube.http)
             .setUserAgent(headers["User-Agent"] ?: InnerTube.PLAYER_UA)
             .setDefaultRequestProperties(headers - "User-Agent")
         val factory = DefaultMediaSourceFactory(ds)
-
         val thumb = s.videoId?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" }
         val meta = MediaMetadata.Builder()
             .setTitle(s.title)
             .setArtist(s.channel)
             .apply { if (thumb != null) setArtworkUri(Uri.parse(thumb)) }
             .build()
-        val subs = s.captions.map {
+        val subs = if (!withCaptions) emptyList() else s.captions.map {
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(it.url))
-                .setMimeType(MimeTypes.TEXT_VTT)
-                .setLanguage(it.lang)
-                .setLabel(it.label)
-                .setId(it.id)
-                .build()
+                .setMimeType(MimeTypes.TEXT_VTT).setLanguage(it.lang).setLabel(it.label).setId(it.id).build()
         }
         val videoItem = MediaItem.Builder()
-            .setUri(s.videoUrl)
-            .setMediaId(url)
-            .setMediaMetadata(meta)
-            .setSubtitleConfigurations(subs)
+            .setUri(s.videoUrl).setMediaId(url).setMediaMetadata(meta).setSubtitleConfigurations(subs)
             .apply { if (s.hls) setMimeType(MimeTypes.APPLICATION_M3U8) }
             .build()
         val video: MediaSource = factory.createMediaSource(videoItem)
-        val source = if (s.audioUrl != null) {
-            MergingMediaSource(video, factory.createMediaSource(MediaItem.fromUri(s.audioUrl)))
-        } else video
+        return if (s.audioUrl != null) MergingMediaSource(video, factory.createMediaSource(MediaItem.fromUri(s.audioUrl))) else video
+    }
 
+    /** Load a stream, keeping [startMs] (used when switching quality). */
+    fun load(context: Context, url: String, s: Stream, startMs: Long = 0L, play: Boolean = true) {
+        val p = get(context)
+        val source = source(url, s)
         p.setMediaSource(source, startMs)
         p.prepare()
         p.playWhenReady = play

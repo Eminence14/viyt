@@ -4,7 +4,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.viyt.app.ui.PlayerActivity
+import com.viyt.app.ui.MainActivity
 
 /** Keeps playback going with the screen off, with lock-screen and notification controls. */
 class PlaybackService : MediaSessionService() {
@@ -15,7 +15,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, PlayerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_EXPAND, true).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, PlayerHolder.get(this))

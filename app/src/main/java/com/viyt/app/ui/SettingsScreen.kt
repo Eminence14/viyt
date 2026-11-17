@@ -55,12 +55,12 @@ fun SettingsScreen() {
     val version by Engine.version.collectAsState()
 
     val login = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        signedIn = Engine.cookies.isSignedIn; Engine.clearCache()
+        signedIn = Engine.cookies.isSignedIn; if (signedIn) Engine.onAccountChanged()
     }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             val ok = Engine.cookies.importFrom(uri)
-            signedIn = Engine.cookies.isSignedIn; Engine.clearCache()
+            signedIn = Engine.cookies.isSignedIn; if (signedIn) Engine.onAccountChanged()
             Toast.makeText(context, if (ok) "Imported" else "No YouTube cookies in that file", Toast.LENGTH_SHORT).show()
         }
     }
@@ -75,7 +75,7 @@ fun SettingsScreen() {
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (signedIn) {
-                OutlinedButton(onClick = { Engine.cookies.signOut(); Engine.clearCache(); signedIn = false }) { Text("Sign out") }
+                OutlinedButton(onClick = { Engine.cookies.signOut(); Engine.onAccountChanged(); signedIn = false }) { Text("Sign out") }
                 OutlinedButton(onClick = { login.launch(Intent(context, LoginActivity::class.java)) }) { Text("Sign in again") }
             } else {
                 Button(onClick = { login.launch(Intent(context, LoginActivity::class.java)) }) { Text("Sign in") }
