@@ -89,6 +89,10 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all { test ->
+            // Print every test and its result in the build log.
+            test.testLogging { events("passed", "failed", "skipped"); showStandardStreams = false }
+        }
     }
     lint {
         checkReleaseBuilds = false
